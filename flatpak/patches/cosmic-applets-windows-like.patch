@@ -1,5 +1,5 @@
 diff --git a/cosmic-app-list/src/app.rs b/cosmic-app-list/src/app.rs
-index 3e5a3a6d..d55d1e07 100755
+index 3e5a3a6d..92e84253 100755
 --- a/cosmic-app-list/src/app.rs
 +++ b/cosmic-app-list/src/app.rs
 @@ -32,7 +32,7 @@ use cosmic::{
@@ -431,10 +431,17 @@ index 3e5a3a6d..d55d1e07 100755
              Message::ToplevelHoverChanged(handle, entering) => {
                  match (entering, &self.hovered_toplevel) {
                      (true, _) => self.hovered_toplevel = Some(handle),
-@@ -1503,6 +1728,12 @@ impl cosmic::Application for CosmicAppList {
+@@ -1503,6 +1728,19 @@ impl cosmic::Application for CosmicAppList {
                                      .map(|(k, v)| (k.clone(), v.clone())),
                              );
                          }
++                        // `app_id` is this applet's id; find the launched app by
++                        // its Exec line for the Start menu's usage counts.
++                        if let Some(entry) =
++                            self.desktop_entries.iter().find(|e| e.exec() == Some(exec.as_str()))
++                        {
++                            record_launch(entry.id());
++                        }
 +                        // Inside a Flatpak, launch on the host instead.
 +                        let (exec, envs, terminal) = if std::env::var_os("FLATPAK_ID").is_some() {
 +                            host_exec(&exec, envs, terminal)
@@ -444,7 +451,7 @@ index 3e5a3a6d..d55d1e07 100755
                          tokio::spawn(async move {
                              cosmic::desktop::spawn_desktop_exec(
                                  exec,
-@@ -1540,6 +1771,7 @@ impl cosmic::Application for CosmicAppList {
+@@ -1540,6 +1778,7 @@ impl cosmic::Application for CosmicAppList {
                  }
              },
              Message::ClosePopup => {
@@ -452,7 +459,7 @@ index 3e5a3a6d..d55d1e07 100755
                  if let Some(p) = self.popup.take() {
                      return destroy_popup(p.id);
                  }
-@@ -1810,7 +2042,7 @@ impl cosmic::Application for CosmicAppList {
+@@ -1810,7 +2049,7 @@ impl cosmic::Application for CosmicAppList {
                          dock_item.as_icon(
                              &self.core.applet,
                              self.rectangle_tracker.as_ref(),
@@ -461,7 +468,7 @@ index 3e5a3a6d..d55d1e07 100755
                              self.config.enable_drag_source,
                              self.gpus.as_deref(),
                              filtered_is_focused,
-@@ -1823,7 +2055,7 @@ impl cosmic::Application for CosmicAppList {
+@@ -1823,7 +2062,7 @@ impl cosmic::Application for CosmicAppList {
                              .full_name(&self.locales)
                              .unwrap_or_default()
                              .into_owned(),
@@ -470,7 +477,7 @@ index 3e5a3a6d..d55d1e07 100755
                          Message::Surface,
                          None,
                      )
-@@ -1923,7 +2155,7 @@ impl cosmic::Application for CosmicAppList {
+@@ -1923,7 +2162,7 @@ impl cosmic::Application for CosmicAppList {
                              dock_item.as_icon(
                                  &self.core.applet,
                                  self.rectangle_tracker.as_ref(),
@@ -479,7 +486,7 @@ index 3e5a3a6d..d55d1e07 100755
                                  self.config.enable_drag_source,
                                  self.gpus.as_deref(),
                                  filtered_is_focused,
-@@ -1936,7 +2168,7 @@ impl cosmic::Application for CosmicAppList {
+@@ -1936,7 +2175,7 @@ impl cosmic::Application for CosmicAppList {
                                  .full_name(&self.locales)
                                  .unwrap_or_default()
                                  .into_owned(),
@@ -488,7 +495,7 @@ index 3e5a3a6d..d55d1e07 100755
                              Message::Surface,
                              None,
                          )
-@@ -2251,7 +2483,28 @@ impl cosmic::Application for CosmicAppList {
+@@ -2251,7 +2490,28 @@ impl cosmic::Application for CosmicAppList {
                          )
                          .into()
                  }
@@ -518,7 +525,7 @@ index 3e5a3a6d..d55d1e07 100755
                      PanelAnchor::Left | PanelAnchor::Right => {
                          let mut content =
                              column![].padding(8).align_x(Alignment::Center).spacing(8);
-@@ -2262,13 +2515,17 @@ impl cosmic::Application for CosmicAppList {
+@@ -2262,13 +2522,17 @@ impl cosmic::Application for CosmicAppList {
                                  info.foreign_toplevel.clone(),
                                  self.is_focused(&info.foreign_toplevel),
                                  self.is_hovered(&info.foreign_toplevel),
@@ -541,7 +548,7 @@ index 3e5a3a6d..d55d1e07 100755
                      }
                      PanelAnchor::Bottom | PanelAnchor::Top => {
                          let mut content = row![].padding(8).align_y(Alignment::Center).spacing(8);
-@@ -2279,15 +2536,20 @@ impl cosmic::Application for CosmicAppList {
+@@ -2279,15 +2543,20 @@ impl cosmic::Application for CosmicAppList {
                                  info.foreign_toplevel.clone(),
                                  self.is_focused(&info.foreign_toplevel),
                                  self.is_hovered(&info.foreign_toplevel),
@@ -568,7 +575,7 @@ index 3e5a3a6d..d55d1e07 100755
              }
          } else if self
              .overflow_active_popup
-@@ -2505,7 +2767,13 @@ impl cosmic::Application for CosmicAppList {
+@@ -2505,7 +2774,13 @@ impl cosmic::Application for CosmicAppList {
      }
  
      fn subscription(&self) -> Subscription<Message> {
@@ -582,7 +589,7 @@ index 3e5a3a6d..d55d1e07 100755
              wayland_subscription().map(Message::Wayland),
              listen_with(|e, _, id| match e {
                  cosmic::iced::core::Event::PlatformSpecific(event::PlatformSpecific::Wayland(
-@@ -2517,6 +2785,14 @@ impl cosmic::Application for CosmicAppList {
+@@ -2517,6 +2792,14 @@ impl cosmic::Application for CosmicAppList {
                  cosmic::iced::core::Event::Mouse(
                      cosmic::iced::core::mouse::Event::ButtonPressed(_),
                  ) => Some(Message::Pressed(id)),
@@ -597,7 +604,7 @@ index 3e5a3a6d..d55d1e07 100755
                  _ => None,
              }),
              rectangle_tracker_subscription(0).map(|update| Message::Rectangle(update.1)),
-@@ -2596,3 +2872,141 @@ impl AsMimeTypes for DndPathBuf {
+@@ -2596,3 +2879,168 @@ impl AsMimeTypes for DndPathBuf {
          Some(Cow::Owned(self.0.to_str()?.as_bytes().to_vec()))
      }
  }
@@ -739,6 +746,33 @@ index 3e5a3a6d..d55d1e07 100755
 +    wrapped.push_str(&exec);
 +    (wrapped, Vec::new(), false)
 +}
++
++/// Count a launch for the Start menu's "Most used" tiles (shared with the
++/// Start and search applets; "<count>\t<desktop id>" per line).
++fn record_launch(app_id: &str) {
++    use std::{collections::HashMap, fs, path::PathBuf};
++    let Some(path) = std::env::var_os("XDG_STATE_HOME")
++        .map(PathBuf::from)
++        .or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".local/state")))
++        .map(|d| d.join("windows-like-ui/app-usage"))
++    else {
++        return;
++    };
++    let mut usage: HashMap<String, u32> = fs::read_to_string(&path)
++        .unwrap_or_default()
++        .lines()
++        .filter_map(|l| {
++            let (n, id) = l.split_once('\t')?;
++            Some((id.to_string(), n.parse().ok()?))
++        })
++        .collect();
++    *usage.entry(app_id.to_string()).or_default() += 1;
++    let out: String = usage.iter().map(|(id, n)| format!("{n}\t{id}\n")).collect();
++    if let Some(dir) = path.parent() {
++        let _ = fs::create_dir_all(dir);
++    }
++    let _ = fs::write(path, out);
++}
 diff --git a/cosmic-applet-input-sources/src/lib.rs b/cosmic-applet-input-sources/src/lib.rs
 index d22d3e7b..77971a5e 100644
 --- a/cosmic-applet-input-sources/src/lib.rs
@@ -834,10 +868,19 @@ index d22d3e7b..77971a5e 100644
 +        .to_uppercase()
 +}
 diff --git a/cosmic-applet-power/src/lib.rs b/cosmic-applet-power/src/lib.rs
-index c75d3e03..251fc9c8 100644
+index c75d3e03..c2739e9a 100644
 --- a/cosmic-applet-power/src/lib.rs
 +++ b/cosmic-applet-power/src/lib.rs
-@@ -16,8 +16,16 @@ use cosmic::{
+@@ -4,7 +4,7 @@
+ use cosmic::{
+     Element, Task, app,
+     applet::{
+-        menu_button, padded_control,
++        menu_button,
+         token::subscription::{TokenRequest, TokenUpdate, activation_token_subscription},
+     },
+     cctk::sctk::reexports::calloop,
+@@ -16,7 +16,14 @@ use cosmic::{
          window,
      },
      surface, theme,
@@ -851,44 +894,86 @@ index c75d3e03..251fc9c8 100644
 +use cosmic::cctk::sctk::reexports::protocols::xdg::shell::client::xdg_positioner::{
 +    Anchor, Gravity,
  };
-+use cosmic::Apply as _;
  use std::sync::LazyLock;
  
- use logind_zbus::{
-@@ -48,6 +56,10 @@ struct Power {
+@@ -32,6 +39,7 @@ use zbus::Connection;
+ pub mod cosmic_session;
+ mod localize;
+ pub mod session_manager;
++mod start;
+ 
+ use crate::{cosmic_session::CosmicSessionProxy, session_manager::SessionManagerProxy};
+ 
+@@ -48,6 +56,18 @@ struct Power {
      core: cosmic::app::Core,
      icon_name: String,
      popup: Option<window::Id>,
 +    // "Power >" submenu (Sleep / Restart / Power off), a child of `popup`.
 +    power_submenu: Option<window::Id>,
++    submenu_kind: SubMenu,
 +    power_row: Option<iced::Rectangle>,
++    lock_row: Option<iced::Rectangle>,
 +    rectangle_tracker: Option<RectangleTracker<u32>>,
++    // "Most used" tiles, loaded each time the Start menu opens.
++    tiles: Vec<(cosmic::desktop::DesktopEntryData, bool)>,
++    tile_view: start::TileView,
++    // Windows 10 "All apps" list shown in place of the tiles, with pinned ids.
++    all_apps: Option<Vec<cosmic::desktop::DesktopEntryData>>,
++    pinned: Vec<String>,
      token_tx: Option<calloop::channel::Sender<TokenRequest>>,
      subsurface_id: window::Id,
  }
-@@ -83,6 +95,11 @@ enum Message {
+@@ -74,6 +94,15 @@ impl PowerAction {
+     }
+ }
+ 
++/// Rail buttons that open a small menu to their right.
++#[derive(Debug, Clone, Copy, PartialEq)]
++enum SubMenu {
++    /// Sleep / Restart / Power off
++    Power,
++    /// Lock / Log out
++    Lock,
++}
++
+ #[derive(Debug, Clone)]
+ enum Message {
+     Action(PowerAction),
+@@ -83,6 +112,17 @@ enum Message {
      Closed(window::Id),
      Token(TokenUpdate),
      Surface(surface::Action<Message>),
-+    OpenPowerSubmenu,
++    OpenSubmenu(SubMenu),
 +    ClosePowerSubmenu,
 +    OpenAllApps,
 +    OpenTaskView,
++    LaunchTile(usize),
++    TogglePin(usize),
++    ShowTiles,
++    SelectTileView(usize),
++    LaunchListed(usize),
++    TogglePinListed(usize),
 +    Rectangle(RectangleUpdate<u32>),
  }
  
  impl cosmic::Application for Power {
-@@ -107,6 +124,9 @@ impl cosmic::Application for Power {
+@@ -107,6 +147,15 @@ impl cosmic::Application for Power {
                  subsurface_id: window::Id::unique(),
                  token_tx: None,
                  popup: Option::default(),
 +                power_submenu: None,
++                submenu_kind: SubMenu::Power,
 +                power_row: None,
++                lock_row: None,
 +                rectangle_tracker: None,
++                tiles: Vec::new(),
++                tile_view: start::TileView::MostUsed,
++                all_apps: None,
++                pinned: Vec::new(),
              },
              Task::none(),
          )
-@@ -120,9 +140,11 @@ impl cosmic::Application for Power {
+@@ -120,23 +169,33 @@ impl cosmic::Application for Power {
          match message {
              Message::TogglePopup => {
                  if let Some(p) = self.popup.take() {
@@ -901,9 +986,32 @@ index c75d3e03..251fc9c8 100644
 +                        cosmic::surface::surface_task(cosmic::surface::action::destroy_popup(p)),
 +                    ]);
                  } else {
++                    self.tile_view = start::read_view();
++                    self.tiles = start::tiles(self.tile_view);
++                    self.all_apps = None;
                      return cosmic::surface::surface_task(cosmic::surface::action::app_popup(
                          |_| Default::default(),
-@@ -183,8 +205,62 @@ impl cosmic::Application for Power {
+                         |app: &mut Power| {
+                             let new_id = window::Id::unique();
+                             app.popup.replace(new_id);
+ 
+-                            let popup_settings = app.core.applet.get_popup_settings(
++                            let mut popup_settings = app.core.applet.get_popup_settings(
+                                 app.core.main_window_id().unwrap(),
+                                 new_id,
+                                 None,
+                                 None,
+                                 None,
+                             );
++                            popup_settings.positioner.size_limits = iced::Limits::NONE
++                                .min_width(1.0)
++                                .min_height(1.0)
++                                .max_width(520.0)
++                                .max_height(600.0);
+                             popup_settings
+                         },
+                         None,
+@@ -183,8 +242,129 @@ impl cosmic::Application for Power {
              Message::Closed(id) => {
                  if self.popup == Some(id) {
                      self.popup = None;
@@ -913,28 +1021,41 @@ index c75d3e03..251fc9c8 100644
 +                    self.power_submenu = None;
 +                }
 +            }
-+            Message::OpenPowerSubmenu => {
-+                let (Some(parent), Some(row), None) =
-+                    (self.popup, self.power_row, self.power_submenu)
-+                else {
-+                    return Task::none();
++            Message::OpenSubmenu(kind) => {
++                // Switching from the other submenu closes that one first.
++                let close = if self.power_submenu.is_some() {
++                    if self.submenu_kind == kind {
++                        return Task::none();
++                    }
++                    self.close_power_submenu()
++                } else {
++                    Task::none()
++                };
++                let row = match kind {
++                    SubMenu::Power => self.power_row,
++                    SubMenu::Lock => self.lock_row,
++                };
++                let (Some(parent), Some(row)) = (self.popup, row) else {
++                    return close;
 +                };
 +                let new_id = window::Id::unique();
 +                self.power_submenu = Some(new_id);
++                self.submenu_kind = kind;
 +                let mut settings =
 +                    self.core
 +                        .applet
 +                        .get_popup_settings(parent, new_id, None, None, None);
-+                // Open to the right of the "Power" row, top-aligned with it.
++                // Open to the right of the Power button, growing upward from
++                // its bottom edge.
 +                settings.positioner.anchor_rect = iced::Rectangle {
 +                    x: row.x as i32,
 +                    y: row.y as i32,
 +                    width: row.width as i32,
 +                    height: row.height as i32,
 +                };
-+                settings.positioner.anchor = Anchor::TopRight;
-+                settings.positioner.gravity = Gravity::BottomRight;
-+                settings.positioner.offset = (4, -8);
++                settings.positioner.anchor = Anchor::BottomRight;
++                settings.positioner.gravity = Gravity::TopRight;
++                settings.positioner.offset = (4, 8);
 +                settings.positioner.size_limits = iced::Limits::NONE
 +                    .min_width(1.0)
 +                    .min_height(1.0)
@@ -942,31 +1063,85 @@ index c75d3e03..251fc9c8 100644
 +                    .max_height(400.0);
 +                // Opened on hover: no input serial to grab with.
 +                settings.grab = false;
-+                return get_popup(settings);
++                return Task::batch([close, get_popup(settings)]);
 +            }
 +            Message::ClosePowerSubmenu => return self.close_power_submenu(),
-+            Message::OpenAllApps | Message::OpenTaskView => {
-+                let cmd = if matches!(message, Message::OpenTaskView) {
-+                    "cosmic-workspaces"
++            Message::TogglePin(i) => {
++                if let Some((app, _)) = self.tiles.get(i) {
++                    start::toggle_pin(&app.id);
++                    self.tiles = start::tiles(self.tile_view);
++                }
++            }
++            Message::LaunchTile(i) => {
++                if let Some((app, _)) = self.tiles.get(i).cloned() {
++                    let launch = Task::future(start::launch(app)).discard();
++                    let close = match self.popup.take() {
++                        Some(p) => {
++                            let sub = self.close_power_submenu();
++                            Task::batch([sub, destroy_popup(p)])
++                        }
++                        None => Task::none(),
++                    };
++                    return Task::batch([launch, close]);
++                }
++            }
++            Message::OpenAllApps => {
++                self.all_apps = Some(start::all_apps());
++                self.pinned = start::read_pinned();
++            }
++            Message::ShowTiles => {
++                self.all_apps = None;
++                self.tiles = start::tiles(self.tile_view);
++            }
++            Message::SelectTileView(i) => {
++                self.tile_view = if i == 0 {
++                    start::TileView::Pinned
 +                } else {
-+                    "cosmic-app-library"
++                    start::TileView::MostUsed
 +                };
++                start::write_view(self.tile_view);
++                self.tiles = start::tiles(self.tile_view);
++            }
++            Message::LaunchListed(i) => {
++                if let Some(app) = self.all_apps.as_ref().and_then(|a| a.get(i)).cloned() {
++                    let launch = Task::future(start::launch(app)).discard();
++                    let close = match self.popup.take() {
++                        Some(p) => {
++                            let sub = self.close_power_submenu();
++                            Task::batch([sub, destroy_popup(p)])
++                        }
++                        None => Task::none(),
++                    };
++                    return Task::batch([launch, close]);
+                 }
+             }
++            Message::TogglePinListed(i) => {
++                if let Some(app) = self.all_apps.as_ref().and_then(|a| a.get(i)) {
++                    start::toggle_pin(&app.id);
++                    self.pinned = start::read_pinned();
++                }
++            }
++            Message::OpenTaskView => {
++                let cmd = "cosmic-workspaces";
 +                if let Err(err) = std::process::Command::new(cmd).spawn() {
 +                    tracing::error!("Failed to spawn {cmd}. {err:?}");
 +                }
 +                if let Some(p) = self.popup.take() {
 +                    let sub = self.close_power_submenu();
 +                    return Task::batch([sub, destroy_popup(p)]);
-                 }
-             }
++                }
++            }
 +            Message::Rectangle(u) => match u {
 +                RectangleUpdate::Init(tracker) => self.rectangle_tracker = Some(tracker),
-+                RectangleUpdate::Rectangle((_, r)) => self.power_row = Some(r),
++                RectangleUpdate::Rectangle((id, r)) => match id {
++                    0 => self.power_row = Some(r),
++                    _ => self.lock_row = Some(r),
++                },
 +            },
              Message::Token(u) => match u {
                  TokenUpdate::Init(tx) => {
                      self.token_tx = Some(tx);
-@@ -209,6 +285,21 @@ impl cosmic::Application for Power {
+@@ -209,6 +389,21 @@ impl cosmic::Application for Power {
      }
  
      fn view(&self) -> Element<'_, Message> {
@@ -988,7 +1163,7 @@ index c75d3e03..251fc9c8 100644
          self.core
              .applet
              .icon_button(&self.icon_name)
-@@ -218,14 +309,47 @@ impl cosmic::Application for Power {
+@@ -218,68 +413,206 @@ impl cosmic::Application for Power {
  
      fn view_window(&self, id: window::Id) -> Element<'_, Message> {
          let Spacing {
@@ -999,79 +1174,39 @@ index c75d3e03..251fc9c8 100644
 +            space_xxs, space_s, ..
          } = theme::active().cosmic().spacing;
  
+-        if matches!(self.popup, Some(p) if p == id) {
+-            let settings = menu_button(text::body(fl!("settings"))).on_press(Message::OpenSettings);
+-
+-            let session = column![
 +        if self.power_submenu == Some(id) {
 +            let item = |icon_name: &'static str, label: &'static str, action| {
-+                menu_button(
+                 menu_button(
+-                    row![
+-                        text_icon("system-lock-screen-symbolic", 24),
+-                        text::body(fl!("lock-screen")),
+-                        space::horizontal().width(Length::Fill),
+-                        text::body(fl!("lock-screen-shortcut")),
+-                    ]
+-                    .align_y(Alignment::Center)
+-                    .spacing(space_xxs)
 +                    row![text_icon(icon_name, 16), text::body(label)]
 +                        .align_y(Alignment::Center)
 +                        .spacing(space_s),
-+                )
-+                .on_press(Message::Action(action))
-+            };
-+            let content = column![
-+                item("system-suspend-symbolic", "Sleep", PowerAction::Suspend),
-+                item("system-reboot-symbolic", "Restart", PowerAction::Restart),
-+                item("system-shutdown-symbolic", "Power off", PowerAction::Shutdown),
-+            ]
-+            .padding([8, 0]);
-+            return self
-+                .core
-+                .applet
-+                .popup_container(content)
-+                .limits(iced::Limits::NONE.min_width(1.0).min_height(1.0).max_width(240.0))
-+                .into();
-+        }
-+
-         if matches!(self.popup, Some(p) if p == id) {
--            let settings = menu_button(text::body(fl!("settings"))).on_press(Message::OpenSettings);
-+            let settings = widget::mouse_area(
-+                menu_button(
-+                    row![
-+                        text_icon("preferences-system-symbolic", 24),
-+                        text::body("Settings"),
-+                        space::horizontal().width(Length::Fill),
-+                        shortcut_label(&["win", "I"]),
-+                    ]
-+                    .align_y(Alignment::Center)
-+                    .spacing(space_xxs),
-+                )
-+                .on_press(Message::OpenSettings),
-+            )
-+            .on_enter(Message::ClosePowerSubmenu);
- 
-             let session = column![
-                 menu_button(
-@@ -233,43 +357,83 @@ impl cosmic::Application for Power {
-                         text_icon("system-lock-screen-symbolic", 24),
-                         text::body(fl!("lock-screen")),
-                         space::horizontal().width(Length::Fill),
--                        text::body(fl!("lock-screen-shortcut")),
-+                        shortcut_label(&["win", "L"]),
-                     ]
-                     .align_y(Alignment::Center)
-                     .spacing(space_xxs)
                  )
 -                .on_press(Message::Action(PowerAction::Lock)),
-+                .on_press(Message::Action(PowerAction::Lock))
-+                .apply(widget::mouse_area)
-+                .on_enter(Message::ClosePowerSubmenu),
-                 menu_button(
-                     row![
-                         text_icon("system-log-out-symbolic", 24),
-                         text::body(fl!("log-out")),
-                         space::horizontal().width(Length::Fill),
+-                menu_button(
+-                    row![
+-                        text_icon("system-log-out-symbolic", 24),
+-                        text::body(fl!("log-out")),
+-                        space::horizontal().width(Length::Fill),
 -                        text::body(fl!("log-out-shortcut")),
-+                        shortcut_label(&["win", "shift", "L"]),
-                     ]
-                     .align_y(Alignment::Center)
-                     .spacing(space_xxs)
-                 )
+-                    ]
+-                    .align_y(Alignment::Center)
+-                    .spacing(space_xxs)
+-                )
 -                .on_press(Message::Action(PowerAction::LogOut)),
-+                .on_press(Message::Action(PowerAction::LogOut))
-+                .apply(widget::mouse_area)
-+                .on_enter(Message::ClosePowerSubmenu),
-             ];
- 
+-            ];
+-
 -            let power = row![
 -                power_buttons(
 -                    "system-suspend-symbolic",
@@ -1084,67 +1219,214 @@ index c75d3e03..251fc9c8 100644
 -                power_buttons(
 -                    "system-shutdown-symbolic",
 -                    Message::Action(PowerAction::Shutdown)
-+            // Windows-style "Power >" entry; the actions live in a submenu.
-+            let power_item = widget::mouse_area(
-+                menu_button(
-+                    row![
-+                        text_icon("system-shutdown-symbolic", 24),
-+                        text::body(fl!("power")),
-+                        space::horizontal().width(Length::Fill),
-+                        text_icon("go-next-symbolic", 16),
-+                    ]
-+                    .align_y(Alignment::Center)
-+                    .spacing(space_xxs),
-+                )
-+                .on_press(Message::OpenPowerSubmenu),
-+            )
-+            .on_enter(Message::OpenPowerSubmenu);
-+            let power: Element<'_, Message> = match self.rectangle_tracker.as_ref() {
-+                Some(tracker) => tracker.container(0, power_item).into(),
-+                None => power_item.into(),
-+            };
-+
-+            let all_apps = widget::mouse_area(
-+                menu_button(
-+                    row![
-+                        text_icon("view-app-grid-symbolic", 24),
-+                        text::body("All apps"),
-+                        space::horizontal().width(Length::Fill),
-+                        shortcut_label(&["win", "A"]),
-+                    ]
-+                    .align_y(Alignment::Center)
-+                    .spacing(space_xxs),
-+                )
-+                .on_press(Message::OpenAllApps),
-+            )
-+            .on_enter(Message::ClosePowerSubmenu);
-+
-+            let task_view = widget::mouse_area(
-+                menu_button(
-+                    row![
-+                        text_icon("focus-windows-symbolic", 24),
-+                        text::body("Task view"),
-+                        space::horizontal().width(Length::Fill),
-+                        shortcut_label(&["win", "W"]),
-+                    ]
-+                    .align_y(Alignment::Center)
-+                    .spacing(space_xxs),
-                 )
+-                )
 -            ]
 -            .spacing(space_m)
 -            .padding([0, space_m]);
-+                .on_press(Message::OpenTaskView),
+-
+-            let content = column![
+-                settings,
+-                padded_control(divider::horizontal::default()).padding([space_xxs, space_s]),
+-                session,
+-                padded_control(divider::horizontal::default()).padding([space_xxs, space_s]),
+-                power
+-            ]
+-            .align_x(Alignment::Start)
++                .on_press(Message::Action(action))
++            };
++            let content = match self.submenu_kind {
++                SubMenu::Power => column![
++                    item("system-suspend-symbolic", "Sleep", PowerAction::Suspend),
++                    item("system-reboot-symbolic", "Restart", PowerAction::Restart),
++                    item("system-shutdown-symbolic", "Power off", PowerAction::Shutdown),
++                ],
++                SubMenu::Lock => column![
++                    item("system-lock-screen-symbolic", "Lock", PowerAction::Lock),
++                    item("system-log-out-symbolic", "Log out", PowerAction::LogOut),
++                ],
++            }
+             .padding([8, 0]);
++            return self
++                .core
++                .applet
++                .popup_container(content)
++                .limits(iced::Limits::NONE.min_width(1.0).min_height(1.0).max_width(240.0))
++                .into();
++        }
+ 
+-            self.core.applet.popup_container(content).into()
++        if matches!(self.popup, Some(p) if p == id) {
++            // Windows 10 style: a vertical icon rail on the left, tiles of
++            // the most used apps on the right.
++            let rail_button = |icon_name: &'static str,
++                               label: &'static str,
++                               keys: &'static [&'static str],
++                               on_press: Message| {
++                let mut tip = row![text::body(label)].spacing(space_s).align_y(Alignment::Center);
++                if !keys.is_empty() {
++                    tip = tip.push(shortcut_label(keys));
++                }
++                let tooltip: Element<'static, Message> = cosmic::widget::tooltip(
++                    button::custom(
++                        widget::container(text_icon(icon_name, 20))
++                            .center(Length::Fixed(RAIL_BUTTON)),
++                    )
++                    .width(Length::Fixed(RAIL_BUTTON))
++                    .height(Length::Fixed(RAIL_BUTTON))
++                    .padding(0)
++                    .class(theme::Button::AppletIcon)
++                    .on_press(on_press.clone()),
++                    tip,
++                    cosmic::widget::tooltip::Position::Right,
++                )
++                .into();
++                tooltip
++            };
++            let plain = |b: Element<'static, Message>| -> Element<'static, Message> {
++                cosmic::widget::mouse_area(b).on_enter(Message::ClosePowerSubmenu).into()
++            };
++
++            // Rail buttons with a submenu open it on hover or click; the
++            // tracker reports where they are so the submenu lines up.
++            let submenu_button = |tracker_id: u32,
++                                  icon_name: &'static str,
++                                  label: &'static str,
++                                  kind: SubMenu|
++             -> Element<'static, Message> {
++                let b = cosmic::widget::mouse_area(rail_button(
++                    icon_name,
++                    label,
++                    &[],
++                    Message::OpenSubmenu(kind),
++                ))
++                .on_enter(Message::OpenSubmenu(kind));
++                match self.rectangle_tracker.as_ref() {
++                    Some(tracker) => tracker.container(tracker_id, b).into(),
++                    None => b.into(),
++                }
++            };
++            let lock = submenu_button(1, "system-log-out-symbolic", "Lock or log out", SubMenu::Lock);
++            let power = submenu_button(0, "system-shutdown-symbolic", "Power", SubMenu::Power);
++
++            let rail = column![
++                plain(rail_button("view-app-grid-symbolic", "All apps", &[], Message::OpenAllApps)),
++                plain(rail_button("focus-windows-symbolic", "Task view", &["win", "W"], Message::OpenTaskView)),
++                space::vertical().height(Length::Fill),
++                plain(rail_button("preferences-system-symbolic", "Settings", &["win", "I"], Message::OpenSettings)),
++                lock,
++                power,
++            ]
++            .spacing(space_xxs)
++            .padding([space_xxs, space_xxs])
++            .height(Length::Fixed(START_HEIGHT));
++
++            let mut grid = column![].spacing(TILE_GAP);
++            for (r, chunk) in self.tiles.chunks(TILE_COLUMNS).enumerate() {
++                let mut tiles_row = row![].spacing(TILE_GAP);
++                for (c, (app, pinned)) in chunk.iter().enumerate() {
++                    tiles_row = tiles_row.push(tile(app, *pinned, r * TILE_COLUMNS + c));
++                }
++                grid = grid.push(tiles_row);
++            }
++            let tiles: Element<'_, Message> = if self.tiles.is_empty() {
++                text::body(match self.tile_view {
++                    start::TileView::Pinned => {
++                        "Right-click an app in All apps or search to pin it here"
++                    }
++                    start::TileView::MostUsed => "Apps you open will show up here",
++                })
++                .into()
++            } else {
++                cosmic::widget::scrollable(grid).height(Length::Fill).into()
++            };
++            let heading = cosmic::widget::dropdown(
++                TILE_VIEWS,
++                Some(match self.tile_view {
++                    start::TileView::Pinned => 0,
++                    start::TileView::MostUsed => 1,
++                }),
++                Message::SelectTileView,
++            );
++            let pane: Element<'_, Message> = match self.all_apps.as_ref() {
++                Some(apps) => {
++                    // Alphabetical list with a letter heading per group.
++                    let mut list = column![].spacing(2);
++                    let mut letter = None;
++                    for (i, app) in apps.iter().enumerate() {
++                        let first = app.name.chars().next().map(|c| c.to_ascii_uppercase());
++                        if first != letter {
++                            letter = first;
++                            let label = match first {
++                                Some(c) if c.is_alphabetic() => c.to_string(),
++                                _ => "#".to_string(),
++                            };
++                            list = list.push(
++                                widget::container(text::heading(label))
++                                    .padding([space_xxs, space_s]),
++                            );
++                        }
++                        let pin: Element<'_, Message> = if self.pinned.contains(&app.id) {
++                            text_icon("pin-symbolic", 14).into()
++                        } else {
++                            Space::new().into()
++                        };
++                        let row_button = menu_button(
++                            row![
++                                icon(cosmic::desktop::IconSourceExt::as_cosmic_icon(&app.icon))
++                                    .size(24),
++                                text::body(app.name.as_str()),
++                                space::horizontal().width(Length::Fill),
++                                pin,
++                            ]
++                            .spacing(space_s)
++                            .align_y(Alignment::Center),
++                        )
++                        .on_press(Message::LaunchListed(i));
++                        list = list.push(
++                            cosmic::widget::mouse_area(row_button)
++                                .on_right_press(Message::TogglePinListed(i)),
++                        );
++                    }
++                    column![
++                        row![
++                            button::text("‹ Tiles").on_press(Message::ShowTiles),
++                            space::horizontal().width(Length::Fill),
++                            text::caption("Right-click to pin"),
++                        ]
++                        .align_y(Alignment::Center),
++                        cosmic::widget::scrollable(list).height(Length::Fill),
++                    ]
++                    .spacing(space_xxs)
++                    .into()
++                }
++                None => column![
++                    heading,
++                    tiles,
++                    text::caption("Right-click a tile to pin or unpin it"),
++                ]
++                .spacing(space_s)
++                .into(),
++            };
++            let right = cosmic::widget::mouse_area(
++                widget::container(pane)
++                    .padding([space_s, space_s])
++                    .width(Length::Fixed(3.0 * TILE + 2.0 * TILE_GAP + 2.0 * 12.0))
++                    .height(Length::Fixed(START_HEIGHT)),
 +            )
 +            .on_enter(Message::ClosePowerSubmenu);
- 
-             let content = column![
-+                all_apps,
-+                task_view,
-+                padded_control(divider::horizontal::default()).padding([space_xxs, space_s]),
-                 settings,
-                 padded_control(divider::horizontal::default()).padding([space_xxs, space_s]),
-                 session,
-@@ -287,7 +451,10 @@ impl cosmic::Application for Power {
++
++            let content = row![rail, divider::vertical::default(), right]
++                .height(Length::Fixed(START_HEIGHT));
++
++            self.core
++                .applet
++                .popup_container(content)
++                .limits(iced::Limits::NONE.min_width(1.0).min_height(1.0).max_width(520.0))
++                .into()
+         } else {
+             //panic!("no view for window {}", id.0)
+             widget::text("").into()
+@@ -287,7 +620,10 @@ impl cosmic::Application for Power {
      }
  
      fn subscription(&self) -> Subscription<Message> {
@@ -1156,10 +1438,69 @@ index c75d3e03..251fc9c8 100644
      }
  
      fn style(&self) -> Option<iced::theme::Style> {
-@@ -295,6 +462,56 @@ impl cosmic::Application for Power {
+@@ -295,6 +631,115 @@ impl cosmic::Application for Power {
      }
  }
  
++const RAIL_BUTTON: f32 = 44.0;
++const TILE_VIEWS: &[&str] = &["Pinned", "Most used"];
++const TILE: f32 = 100.0;
++const TILE_GAP: f32 = 6.0;
++const TILE_COLUMNS: usize = 3;
++const START_HEIGHT: f32 = 3.0 * TILE + 2.0 * TILE_GAP + 64.0;
++
++/// Accent-colored square tile with the app icon centered and its name in the
++/// bottom-left corner, like Windows 10 Start tiles.
++fn tile(app: &cosmic::desktop::DesktopEntryData, pinned: bool, index: usize) -> Element<'_, Message> {
++    use cosmic::desktop::IconSourceExt;
++    fn style(theme: &cosmic::Theme, hovered: bool, pressed: bool) -> button::Style {
++        let cosmic = theme.cosmic();
++        let mut bg: iced::Color = cosmic.accent_color().into();
++        bg.a = if pressed { 0.65 } else if hovered { 0.95 } else { 0.8 };
++        let mut s = button::Style::new();
++        s.background = Some(iced::Background::Color(bg));
++        s.border_radius = cosmic.corner_radii.radius_s.into();
++        s.text_color = Some(cosmic.on_accent_color().into());
++        s.icon_color = s.text_color;
++        if hovered {
++            s.border_width = 2.0;
++            s.border_color = cosmic.on_accent_color().into();
++        }
++        s
++    }
++    let pin: Element<'_, Message> = if pinned {
++        text_icon("pin-symbolic", 12).into()
++    } else {
++        Space::new().into()
++    };
++    let tile = button::custom(
++        column![
++            row![space::horizontal().width(Length::Fill), pin],
++            widget::container(icon(app.icon.as_cosmic_icon()).size(40))
++                .center_x(Length::Fill)
++                .center_y(Length::Fill),
++            text::caption(app.name.as_str())
++                .ellipsize(cosmic::iced::advanced::text::Ellipsize::End(
++                    cosmic::iced::advanced::text::EllipsizeHeightLimit::Lines(1),
++                )),
++        ]
++        .padding(8),
++    )
++    .width(Length::Fixed(TILE))
++    .height(Length::Fixed(TILE))
++    .padding(0)
++    .class(theme::Button::Custom {
++        active: Box::new(|_, t| style(t, false, false)),
++        disabled: Box::new(|t| style(t, false, false)),
++        hovered: Box::new(|_, t| style(t, true, false)),
++        pressed: Box::new(|_, t| style(t, true, true)),
++    })
++    .on_press(Message::LaunchTile(index));
++    cosmic::widget::mouse_area(tile)
++        .on_right_press(Message::TogglePin(index))
++        .into()
++}
++
 +const SHIFT_SVG: &[u8] = br#"<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 16 16"><path d="M8 1.5 L14.5 8.5 H10.75 V14.5 H5.25 V8.5 H1.5 Z" fill="none" stroke="black" stroke-width="1.6" stroke-linejoin="round"/></svg>"#;
 +
 +/// Windows-style shortcut hint, e.g. [win] + Esc. "win" draws a four-pane
@@ -1213,14 +1554,239 @@ index c75d3e03..251fc9c8 100644
  fn power_buttons(name: &str, on_press: Message) -> button::Button<'_, Message> {
      button::custom(
          widget::container(text_icon(name, 40))
+diff --git a/cosmic-applet-power/src/start.rs b/cosmic-applet-power/src/start.rs
+new file mode 100644
+index 00000000..589e8d97
+--- /dev/null
++++ b/cosmic-applet-power/src/start.rs
+@@ -0,0 +1,206 @@
++// SPDX-License-Identifier: GPL-3.0-only
++
++//! Tiles for the Windows 10 style Start menu.
++//!
++//! Pinned tiles come first (right-click a tile or a search result to pin or
++//! unpin); the remaining slots show the most used apps. COSMIC keeps no app
++//! usage statistics, so launches from the taskbar, the search popup and these
++//! tiles are counted in a small shared file.
++
++use cosmic::desktop::{DesktopEntryData, fde::get_languages_from_env};
++use std::{collections::HashMap, fs, path::PathBuf};
++
++pub const MAX_TILES: usize = 9;
++
++fn state_dir() -> Option<PathBuf> {
++    std::env::var_os("XDG_STATE_HOME")
++        .map(PathBuf::from)
++        .or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".local/state")))
++}
++
++fn usage_path() -> Option<PathBuf> {
++    Some(state_dir()?.join("windows-like-ui/app-usage"))
++}
++
++/// Launch counts per desktop entry id ("<count>\t<id>" per line).
++fn read_usage() -> HashMap<String, u32> {
++    let Some(text) = usage_path().and_then(|p| fs::read_to_string(p).ok()) else {
++        return HashMap::new();
++    };
++    text.lines()
++        .filter_map(|line| {
++            let (count, id) = line.split_once('\t')?;
++            Some((id.to_string(), count.parse().ok()?))
++        })
++        .collect()
++}
++
++pub fn record_launch(app_id: &str) {
++    let Some(path) = usage_path() else {
++        return;
++    };
++    let mut usage = read_usage();
++    *usage.entry(app_id.to_string()).or_default() += 1;
++    let out: String = usage.iter().map(|(id, n)| format!("{n}\t{id}\n")).collect();
++    if let Some(dir) = path.parent() {
++        let _ = fs::create_dir_all(dir);
++    }
++    let _ = fs::write(path, out);
++}
++
++fn pinned_path() -> Option<PathBuf> {
++    Some(state_dir()?.join("windows-like-ui/start-pinned"))
++}
++
++/// Desktop ids pinned to Start, in order.
++pub fn read_pinned() -> Vec<String> {
++    pinned_path()
++        .and_then(|p| fs::read_to_string(p).ok())
++        .map(|t| t.lines().filter(|l| !l.is_empty()).map(str::to_string).collect())
++        .unwrap_or_default()
++}
++
++/// Pin an app to Start, or unpin it if it already is.
++pub fn toggle_pin(app_id: &str) {
++    let Some(path) = pinned_path() else {
++        return;
++    };
++    let mut pinned = read_pinned();
++    if pinned.iter().any(|id| id == app_id) {
++        pinned.retain(|id| id != app_id);
++    } else {
++        pinned.push(app_id.to_string());
++    }
++    if let Some(dir) = path.parent() {
++        let _ = fs::create_dir_all(dir);
++    }
++    let _ = fs::write(path, pinned.iter().map(|id| format!("{id}\n")).collect::<String>());
++}
++
++/// Which tiles Start shows, picked from the dropdown above the grid.
++#[derive(Debug, Clone, Copy, PartialEq)]
++pub enum TileView {
++    Pinned,
++    MostUsed,
++}
++
++fn view_path() -> Option<PathBuf> {
++    Some(state_dir()?.join("windows-like-ui/start-view"))
++}
++
++/// Last chosen view; the first time, Pinned if anything is pinned.
++pub fn read_view() -> TileView {
++    match view_path().and_then(|p| fs::read_to_string(p).ok()).as_deref().map(str::trim) {
++        Some("pinned") => TileView::Pinned,
++        Some("most-used") => TileView::MostUsed,
++        _ if !read_pinned().is_empty() => TileView::Pinned,
++        _ => TileView::MostUsed,
++    }
++}
++
++pub fn write_view(view: TileView) {
++    let Some(path) = view_path() else {
++        return;
++    };
++    if let Some(dir) = path.parent() {
++        let _ = fs::create_dir_all(dir);
++    }
++    let name = match view {
++        TileView::Pinned => "pinned",
++        TileView::MostUsed => "most-used",
++    };
++    let _ = fs::write(path, name);
++}
++
++/// Pinned taskbar apps, used to fill the tiles until there is usage data.
++fn taskbar_favorites() -> Vec<String> {
++    let base = std::env::var_os("XDG_CONFIG_HOME")
++        .map(PathBuf::from)
++        .or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".config")));
++    let Some(text) = base.and_then(|b| {
++        fs::read_to_string(b.join("cosmic/com.system76.CosmicAppList/v1/favorites")).ok()
++    }) else {
++        return Vec::new();
++    };
++    text.split('"')
++        .skip(1)
++        .step_by(2)
++        .map(str::to_string)
++        .collect()
++}
++
++/// Start tiles with a "pinned" flag. Pinned view: the pinned apps, in pin
++/// order. Most used view: the most launched apps, topped up with pinned
++/// taskbar apps, up to `MAX_TILES`.
++pub fn tiles(view: TileView) -> Vec<(DesktopEntryData, bool)> {
++    let apps = all_apps();
++    let find = |id: &str| apps.iter().find(|a| a.id == id || a.id == format!("{id}.desktop"));
++
++    let mut usage: Vec<(String, u32)> = read_usage().into_iter().collect();
++    usage.sort_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0.cmp(&b.0)));
++
++    let pinned = read_pinned();
++    let mut tiles: Vec<(DesktopEntryData, bool)> = Vec::new();
++    if view == TileView::Pinned {
++        for id in &pinned {
++            if let Some(app) = find(id)
++                && !tiles.iter().any(|(t, _)| t.id == app.id)
++            {
++                tiles.push((app.clone(), true));
++            }
++        }
++        return tiles;
++    }
++    for id in usage
++        .into_iter()
++        .map(|(id, _)| id)
++        .chain(taskbar_favorites())
++    {
++        if tiles.len() >= MAX_TILES {
++            break;
++        }
++        if let Some(app) = find(&id)
++            && !tiles.iter().any(|(t, _)| t.id == app.id)
++        {
++            tiles.push((app.clone(), pinned.contains(&app.id)));
++        }
++    }
++    tiles
++}
++
++/// Every launchable app, sorted by name (Start's "All apps" list).
++pub fn all_apps() -> Vec<DesktopEntryData> {
++    let locales = get_languages_from_env();
++    let desktop = std::env::var("XDG_CURRENT_DESKTOP").ok();
++    let mut apps: Vec<DesktopEntryData> =
++        cosmic::desktop::load_applications(&locales, false, desktop.as_deref())
++            .filter(|app| app.exec.is_some())
++            .collect();
++    apps.sort_by_key(|app| app.name.to_lowercase());
++    apps
++}
++
++/// Launch an app; inside a Flatpak it runs on the host.
++pub async fn launch(app: DesktopEntryData) {
++    let Some(exec) = app.exec else {
++        return;
++    };
++    record_launch(&app.id);
++    let (exec, terminal) = if std::env::var_os("FLATPAK_ID").is_some() {
++        let exec = if app.terminal {
++            format!("cosmic-term -e {exec}")
++        } else {
++            exec
++        };
++        (format!("flatpak-spawn --host {exec}"), false)
++    } else {
++        (exec, app.terminal)
++    };
++    cosmic::desktop::spawn_desktop_exec(
++        exec,
++        Vec::<(String, String)>::new(),
++        Some(app.id.as_str()),
++        terminal,
++    )
++    .await;
++}
 diff --git a/cosmic-panel-button/src/lib.rs b/cosmic-panel-button/src/lib.rs
-index 68c55af0..45751e54 100644
+index 68c55af0..0acd296b 100644
 --- a/cosmic-panel-button/src/lib.rs
 +++ b/cosmic-panel-button/src/lib.rs
-@@ -35,6 +35,48 @@ struct Button {
-     config: IndividualConfig,
- }
+@@ -19,6 +19,7 @@ use cosmic_config::{Config, CosmicConfigEntry};
+ use std::{env, fs, process::Command, sync::LazyLock};
  
+ mod config;
++mod search;
+ 
+ static AUTOSIZE_MAIN_ID: LazyLock<Id> = LazyLock::new(|| Id::new("autosize-main"));
+ 
+@@ -33,11 +34,60 @@ struct Button {
+     core: cosmic::app::Core,
+     desktop: Desktop,
+     config: IndividualConfig,
++    // Search mode: popup with app results above the search box.
++    popup: Option<iced::window::Id>,
++    search: search::Search,
++}
++
 +/// Windows-style taskbar search box: started with `search` as the second
 +/// argument, the button is drawn as a rounded "Search" field.
 +static SEARCH_MODE: LazyLock<bool> =
@@ -1261,14 +1827,92 @@ index 68c55af0..45751e54 100644
 +        hovered: Box::new(|_, t| style(t, true, false)),
 +        pressed: Box::new(|_, t| style(t, true, true)),
 +    }
-+}
-+
+ }
+ 
  #[derive(Debug, Clone)]
  enum Msg {
      Press,
-@@ -148,6 +190,76 @@ impl cosmic::Application for Button {
++    ToggleSearch,
++    Search(search::SearchMsg),
++    Closed(iced::window::Id),
++    Escape,
+     ConfigUpdated(CosmicPanelButtonConfig),
+     Surface(surface::Action<Msg>),
+ }
+@@ -103,6 +153,8 @@ impl cosmic::Application for Button {
+                 core,
+                 desktop,
+                 config,
++                popup: None,
++                search: search::Search::default(),
+             },
+             Task::none(),
+         )
+@@ -143,11 +195,138 @@ impl cosmic::Application for Button {
+             Msg::Surface(a) => {
+                 return cosmic::task::message(cosmic::Action::Surface(a));
+             }
++            Msg::ToggleSearch => {
++                if let Some(p) = self.popup.take() {
++                    return iced::platform_specific::shell::commands::popup::destroy_popup(p);
++                }
++                self.search.open();
++                let new_id = iced::window::Id::unique();
++                self.popup = Some(new_id);
++                let mut settings = self.core.applet.get_popup_settings(
++                    self.core.main_window_id().unwrap(),
++                    new_id,
++                    None,
++                    None,
++                    None,
++                );
++                settings.positioner.size_limits = iced::Limits::NONE
++                    .min_width(1.0)
++                    .min_height(1.0)
++                    .max_width(440.0)
++                    .max_height(620.0);
++                return Task::batch([
++                    iced::platform_specific::shell::commands::popup::get_popup(settings),
++                    cosmic::widget::text_input::focus(search::INPUT_ID.clone()),
++                ]);
++            }
++            Msg::Search(m) => match self.search.update(m) {
++                search::Outcome::None => {}
++                search::Outcome::Launch(app) => {
++                    let launch = Task::future(launch_app(app)).discard();
++                    return Task::batch([launch, self.close_search()]);
++                }
++                search::Outcome::OpenLauncher => {
++                    let _ = self.update(Msg::Press);
++                    return self.close_search();
++                }
++            },
++            Msg::Escape => return self.close_search(),
++            Msg::Closed(id) => {
++                if self.popup == Some(id) {
++                    self.popup = None;
++                }
++            }
+         }
+         Task::none()
      }
  
++    fn view_window(&self, id: iced::window::Id) -> cosmic::Element<'_, Msg> {
++        if self.popup == Some(id) {
++            return self
++                .core
++                .applet
++                .popup_container(self.search.view().map(Msg::Search))
++                .limits(iced::Limits::NONE.min_width(1.0).min_height(1.0).max_width(440.0))
++                .into();
++        }
++        cosmic::widget::text("").into()
++    }
++
++    fn on_close_requested(&self, id: iced::window::Id) -> Option<Msg> {
++        Some(Msg::Closed(id))
++    }
++
      fn view(&self) -> cosmic::Element<'_, Msg> {
 +        if *SEARCH_MODE && self.core.applet.is_horizontal() {
 +            let suggested = self.core.applet.suggested_size(true);
@@ -1330,7 +1974,7 @@ index 68c55af0..45751e54 100644
 +            .width(Length::Shrink)
 +            .height(Length::Fixed((outer_h - px(12.0)).max(20.0)))
 +            .class(search_box_style())
-+            .on_press_down(Msg::Press);
++            .on_press_down(Msg::ToggleSearch);
 +            return autosize::autosize(
 +                cosmic::widget::container(pill)
 +                    .padding([0, 6])
@@ -1343,3 +1987,474 @@ index 68c55af0..45751e54 100644
          // currently, panel being anchored to the left or right is a hard
          // override for icon, later if text is updated to wrap, we may
          // use Override::Text to override this behavior
+@@ -201,15 +380,66 @@ impl cosmic::Application for Button {
+     }
+ 
+     fn subscription(&self) -> iced::Subscription<Self::Message> {
+-        self.core.watch_config(Self::APP_ID).map(|u| {
++        let config = self.core.watch_config(Self::APP_ID).map(|u| {
+             for why in u.errors {
+                 tracing::error!(why = why.to_string(), "Error watching config");
+             }
+             Msg::ConfigUpdated(u.config)
+-        })
++        });
++        if self.popup.is_none() {
++            return config;
++        }
++        // Arrow keys move through the results, Escape closes the popup.
++        let keys = iced::event::listen_with(|event, _, _| {
++            use iced::keyboard::{Event::KeyPressed, Key, key::Named};
++            match event {
++                iced::Event::Keyboard(KeyPressed { key: Key::Named(named), .. }) => match named {
++                    Named::ArrowDown => Some(Msg::Search(search::SearchMsg::Move(1))),
++                    Named::ArrowUp => Some(Msg::Search(search::SearchMsg::Move(-1))),
++                    Named::Escape => Some(Msg::Escape),
++                    _ => None,
++                },
++                _ => None,
++            }
++        });
++        iced::Subscription::batch([config, keys])
++    }
++}
++
++impl Button {
++    fn close_search(&mut self) -> app::Task<Msg> {
++        match self.popup.take() {
++            Some(p) => iced::platform_specific::shell::commands::popup::destroy_popup(p),
++            None => Task::none(),
++        }
+     }
+ }
+ 
++/// Launch a search result; inside a Flatpak it runs on the host.
++async fn launch_app(app: cosmic::desktop::DesktopEntryData) {
++    let Some(exec) = app.exec else {
++        return;
++    };
++    record_launch(&app.id);
++    let (exec, terminal) = if env::var_os("FLATPAK_ID").is_some() {
++        let exec = if app.terminal {
++            format!("cosmic-term -e {exec}")
++        } else {
++            exec
++        };
++        (format!("flatpak-spawn --host {exec}"), false)
++    } else {
++        (exec, app.terminal)
++    };
++    cosmic::desktop::spawn_desktop_exec(
++        exec,
++        Vec::<(String, String)>::new(),
++        Some(app.id.as_str()),
++        terminal,
++    )
++    .await;
++}
++
+ pub fn run() -> iced::Result {
+     let id = env::args()
+         .nth(1)
+@@ -242,3 +472,30 @@ pub fn run() -> iced::Result {
+     });
+     cosmic::applet::run::<Button>(desktop)
+ }
++
++/// Count a launch for the Start menu's "Most used" tiles (shared with the
++/// Start and search applets; "<count>\t<desktop id>" per line).
++fn record_launch(app_id: &str) {
++    use std::{collections::HashMap, fs, path::PathBuf};
++    let Some(path) = std::env::var_os("XDG_STATE_HOME")
++        .map(PathBuf::from)
++        .or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".local/state")))
++        .map(|d| d.join("windows-like-ui/app-usage"))
++    else {
++        return;
++    };
++    let mut usage: HashMap<String, u32> = fs::read_to_string(&path)
++        .unwrap_or_default()
++        .lines()
++        .filter_map(|l| {
++            let (n, id) = l.split_once('\t')?;
++            Some((id.to_string(), n.parse().ok()?))
++        })
++        .collect();
++    *usage.entry(app_id.to_string()).or_default() += 1;
++    let out: String = usage.iter().map(|(id, n)| format!("{n}\t{id}\n")).collect();
++    if let Some(dir) = path.parent() {
++        let _ = fs::create_dir_all(dir);
++    }
++    let _ = fs::write(path, out);
++}
+diff --git a/cosmic-panel-button/src/search.rs b/cosmic-panel-button/src/search.rs
+new file mode 100644
+index 00000000..309079a9
+--- /dev/null
++++ b/cosmic-panel-button/src/search.rs
+@@ -0,0 +1,365 @@
++// SPDX-License-Identifier: GPL-3.0-only
++
++//! Windows-style search popup for the taskbar search box: app results and
++//! recently launched apps above the box, with the text field at the bottom.
++
++use cosmic::desktop::{DesktopEntryData, IconSourceExt, fde::get_languages_from_env};
++use cosmic::iced::{Alignment, Length};
++use cosmic::widget::{self, Id, column, divider, icon, row, text};
++use cosmic::{Element, applet::menu_button, theme};
++use std::{fs, path::PathBuf, sync::LazyLock};
++
++pub static INPUT_ID: LazyLock<Id> = LazyLock::new(|| Id::new("wlui-search-input"));
++
++const MAX_RESULTS: usize = 8;
++const MAX_RECENT_APPS: usize = 6;
++
++#[derive(Debug, Clone)]
++pub enum SearchMsg {
++    Query(String),
++    Submit,
++    Launch(usize),
++    LaunchRecent(String),
++    TogglePin(String),
++    Move(i32),
++    OpenLauncher,
++}
++
++/// What the popup asks the applet to do after handling a message.
++pub enum Outcome {
++    None,
++    Launch(DesktopEntryData),
++    OpenLauncher,
++}
++
++#[derive(Default)]
++pub struct Search {
++    pub query: String,
++    apps: Vec<DesktopEntryData>,
++    results: Vec<usize>,
++    selected: usize,
++    recent_apps: Vec<String>,
++    // Apps pinned to the Start menu (shared file with the Start applet).
++    pinned: Vec<String>,
++}
++
++impl Search {
++    /// Load installed apps and the recent history; called when the popup opens.
++    pub fn open(&mut self) {
++        let locales = get_languages_from_env();
++        let desktop = std::env::var("XDG_CURRENT_DESKTOP").ok();
++        self.apps = cosmic::desktop::load_applications(&locales, false, desktop.as_deref())
++            .filter(|app| app.exec.is_some())
++            .collect();
++        self.apps.sort_by_key(|app| app.name.to_lowercase());
++        self.query.clear();
++        self.selected = 0;
++        self.results.clear();
++        self.load_history();
++        self.pinned = read_pinned();
++    }
++
++    pub fn update(&mut self, msg: SearchMsg) -> Outcome {
++        match msg {
++            SearchMsg::Query(q) => {
++                self.query = q;
++                self.refresh();
++            }
++            SearchMsg::Move(delta) => {
++                let len = self.visible_len();
++                if len > 0 {
++                    self.selected =
++                        (self.selected as i32 + delta).rem_euclid(len as i32) as usize;
++                }
++            }
++            SearchMsg::Submit => {
++                if self.query.trim().is_empty() {
++                    if let Some(id) = self.recent_apps.get(self.selected).cloned() {
++                        return self.launch_id(&id);
++                    }
++                    return Outcome::None;
++                }
++                return match self.results.get(self.selected) {
++                    Some(&i) => self.launch(i),
++                    None => Outcome::OpenLauncher,
++                };
++            }
++            SearchMsg::Launch(i) => return self.launch(i),
++            SearchMsg::LaunchRecent(id) => return self.launch_id(&id),
++            SearchMsg::TogglePin(id) => {
++                if self.pinned.contains(&id) {
++                    self.pinned.retain(|p| p != &id);
++                } else {
++                    self.pinned.push(id);
++                }
++                write_pinned(&self.pinned);
++            }
++            SearchMsg::OpenLauncher => return Outcome::OpenLauncher,
++        }
++        Outcome::None
++    }
++
++    fn visible_len(&self) -> usize {
++        if self.query.trim().is_empty() {
++            self.recent_apps.len()
++        } else {
++            self.results.len()
++        }
++    }
++
++    /// Rank apps: name starts with the query, then a word in the name does,
++    /// then the name contains it, then keywords/description/command match.
++    fn refresh(&mut self) {
++        self.selected = 0;
++        let q = self.query.trim().to_lowercase();
++        if q.is_empty() {
++            self.results.clear();
++            return;
++        }
++        let mut scored: Vec<(u8, usize)> = self
++            .apps
++            .iter()
++            .enumerate()
++            .filter_map(|(i, app)| {
++                let name = app.name.to_lowercase();
++                let score = if name.starts_with(&q) {
++                    0
++                } else if name.split_whitespace().any(|w| w.starts_with(&q)) {
++                    1
++                } else if name.contains(&q) {
++                    2
++                } else if app.id.to_lowercase().contains(&q)
++                    || app.exec.as_deref().is_some_and(|e| e.to_lowercase().contains(&q))
++                    || app.categories.iter().any(|c| c.to_lowercase().contains(&q))
++                {
++                    3
++                } else {
++                    return None;
++                };
++                Some((score, i))
++            })
++            .collect();
++        scored.sort_by_key(|&(score, i)| (score, self.apps[i].name.len()));
++        self.results = scored.into_iter().take(MAX_RESULTS).map(|(_, i)| i).collect();
++    }
++
++    fn launch(&mut self, i: usize) -> Outcome {
++        let Some(app) = self.apps.get(i).cloned() else {
++            return Outcome::None;
++        };
++        self.remember(&app.id);
++        Outcome::Launch(app)
++    }
++
++    fn launch_id(&mut self, id: &str) -> Outcome {
++        match self.apps.iter().position(|a| a.id == id) {
++            Some(i) => self.launch(i),
++            None => Outcome::None,
++        }
++    }
++
++    fn remember(&mut self, app_id: &str) {
++        self.recent_apps.retain(|id| id != app_id);
++        self.recent_apps.insert(0, app_id.to_string());
++        self.recent_apps.truncate(MAX_RECENT_APPS);
++        self.save_history();
++    }
++
++    fn history_path() -> Option<PathBuf> {
++        let base = std::env::var_os("XDG_STATE_HOME")
++            .map(PathBuf::from)
++            .or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".local/state")))?;
++        Some(base.join("windows-like-search/history"))
++    }
++
++    fn load_history(&mut self) {
++        self.recent_apps.clear();
++        let Some(text) = Self::history_path().and_then(|p| fs::read_to_string(p).ok()) else {
++            return;
++        };
++        for line in text.lines() {
++            if let Some(id) = line.strip_prefix("app:") {
++                if self.apps.iter().any(|a| a.id == id) {
++                    self.recent_apps.push(id.to_string());
++                }
++            }
++        }
++        self.recent_apps.truncate(MAX_RECENT_APPS);
++    }
++
++    fn save_history(&self) {
++        let Some(path) = Self::history_path() else {
++            return;
++        };
++        let mut out = String::new();
++        for id in &self.recent_apps {
++            out.push_str(&format!("app:{id}\n"));
++        }
++        if let Some(dir) = path.parent() {
++            let _ = fs::create_dir_all(dir);
++        }
++        let _ = fs::write(path, out);
++    }
++
++    pub fn view(&self) -> Element<'_, SearchMsg> {
++        let spacing = theme::active().cosmic().spacing;
++        let mut list = column::with_capacity(16).spacing(2);
++
++        let heading = |label: &'static str| {
++            text::caption_heading(label)
++                .apply_padding([spacing.space_xxs, spacing.space_s])
++        };
++
++        if self.query.trim().is_empty() {
++            if self.recent_apps.is_empty() {
++                list = list.push(heading("Type to search your apps"));
++            }
++            if !self.recent_apps.is_empty() {
++                list = list.push(heading("Recent"));
++                for (n, id) in self.recent_apps.iter().enumerate() {
++                    if let Some(app) = self.apps.iter().find(|a| &a.id == id) {
++                        list = list.push(self.pinnable(
++                            app,
++                            app_row(app, n == self.selected, self.pinned.contains(&app.id))
++                                .on_press(SearchMsg::LaunchRecent(id.clone())),
++                        ));
++                    }
++                }
++            }
++        } else if self.results.is_empty() {
++            list = list.push(heading("No apps found"));
++        } else {
++            list = list.push(heading("Best match"));
++            for (n, &i) in self.results.iter().enumerate() {
++                let app = &self.apps[i];
++                list = list.push(self.pinnable(
++                    app,
++                    app_row(app, n == self.selected, self.pinned.contains(&app.id))
++                        .on_press(SearchMsg::Launch(i)),
++                ));
++            }
++        }
++
++        list = list.push(
++            text::caption("Right-click an app to pin it to Start")
++                .apply_padding([spacing.space_xxs, spacing.space_s]),
++        );
++        list = list.push(
++            menu_button(
++                row![
++                    icon::from_name("system-search-symbolic").size(16),
++                    text::body("Search files and more in the launcher"),
++                ]
++                .spacing(spacing.space_s)
++                .align_y(Alignment::Center),
++            )
++            .on_press(SearchMsg::OpenLauncher),
++        );
++
++        let input = widget::search_input("Search...", self.query.as_str())
++            .id(INPUT_ID.clone())
++            .on_input(SearchMsg::Query)
++            .on_submit(|_| SearchMsg::Submit)
++            .on_clear(SearchMsg::Query(String::new()))
++            .width(Length::Fill);
++
++        column![
++            widget::scrollable(list).height(Length::Shrink),
++            divider::horizontal::default(),
++            widget::container(input).padding([spacing.space_xs, spacing.space_s]),
++        ]
++        .spacing(spacing.space_xxs)
++        .padding([spacing.space_xs, 0, 0, 0])
++        .width(Length::Fixed(440.0))
++        .into()
++    }
++}
++
++impl Search {
++    /// Right-click pins the app to Start, or unpins it.
++    fn pinnable<'a>(
++        &self,
++        app: &DesktopEntryData,
++        row: widget::Button<'a, SearchMsg>,
++    ) -> Element<'a, SearchMsg> {
++        widget::mouse_area(row)
++            .on_right_press(SearchMsg::TogglePin(app.id.clone()))
++            .into()
++    }
++}
++
++fn pinned_path() -> Option<PathBuf> {
++    let base = std::env::var_os("XDG_STATE_HOME")
++        .map(PathBuf::from)
++        .or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".local/state")))?;
++    Some(base.join("windows-like-ui/start-pinned"))
++}
++
++fn read_pinned() -> Vec<String> {
++    pinned_path()
++        .and_then(|p| fs::read_to_string(p).ok())
++        .map(|t| t.lines().filter(|l| !l.is_empty()).map(str::to_string).collect())
++        .unwrap_or_default()
++}
++
++fn write_pinned(pinned: &[String]) {
++    let Some(path) = pinned_path() else {
++        return;
++    };
++    if let Some(dir) = path.parent() {
++        let _ = fs::create_dir_all(dir);
++    }
++    let _ = fs::write(path, pinned.iter().map(|id| format!("{id}\n")).collect::<String>());
++}
++
++fn app_row(app: &DesktopEntryData, selected: bool, pinned: bool) -> widget::Button<'_, SearchMsg> {
++    let spacing = theme::active().cosmic().spacing;
++    let pin: Element<'_, SearchMsg> = if pinned {
++        icon::from_name("pin-symbolic").size(14).into()
++    } else {
++        widget::Space::new().into()
++    };
++    menu_button(
++        row![
++            icon(app.icon.as_cosmic_icon()).size(28),
++            text::body(app.name.as_str()),
++            widget::space::horizontal().width(Length::Fill),
++            pin,
++        ]
++        .spacing(spacing.space_s)
++        .align_y(Alignment::Center),
++    )
++    .class(if selected { highlighted() } else { theme::Button::AppletMenu })
++}
++
++/// Row picked by the arrow keys (what Enter launches): accent-tinted
++/// background, like the selected result in the Windows search panel.
++fn highlighted() -> theme::Button {
++    fn style(theme: &cosmic::Theme, hovered: bool) -> widget::button::Style {
++        let cosmic = theme.cosmic();
++        let mut bg: cosmic::iced::Color = cosmic.accent_color().into();
++        bg.a = if hovered { 0.3 } else { 0.2 };
++        let mut s = widget::button::Style::new();
++        s.background = Some(cosmic::iced::Background::Color(bg));
++        s.border_radius = cosmic.corner_radii.radius_s.into();
++        s.text_color = Some(cosmic.background(theme.transparent).on.into());
++        s.icon_color = s.text_color;
++        s
++    }
++    theme::Button::Custom {
++        active: Box::new(|_, t| style(t, false)),
++        disabled: Box::new(|t| style(t, false)),
++        hovered: Box::new(|_, t| style(t, true)),
++        pressed: Box::new(|_, t| style(t, true)),
++    }
++}
++
++trait ApplyPadding<'a> {
++    fn apply_padding(self, padding: [u16; 2]) -> Element<'a, SearchMsg>;
++}
++
++impl<'a, T: Into<Element<'a, SearchMsg>>> ApplyPadding<'a> for T {
++    fn apply_padding(self, padding: [u16; 2]) -> Element<'a, SearchMsg> {
++        widget::container(self).padding(padding).into()
++    }
++}
