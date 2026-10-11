@@ -17,26 +17,35 @@ All applets come in one Flatpak.
 ## Screenshots
 
 ### Taskbar & Start button
-<img width="2557" height="373" alt="Taskbar and Start button" src="https://github.com/user-attachments/assets/abb48336-b45c-4b23-ad51-89f38fc14cd7" />
+<img width="258" height="59" alt="image" src="https://github.com/user-attachments/assets/11876eab-23ec-4859-a461-6aaf391b1cb6" />
+
+<hr>
 
 ### Window previews on hover
 <img width="2557" height="373" alt="Window previews on hover" src="https://github.com/user-attachments/assets/fdae5b7a-08b2-4b1a-8403-1a8fb27afc81" />
 
+<hr>
+
 ### Start menu
-<!-- Add images here -->
+<img width="387" height="445" alt="image" src="https://github.com/user-attachments/assets/0da5ec37-ef43-4f67-b963-5f7e61bd936e" />
+
+> Note: You can swap between pinned and most used apps on the top.
+
+<hr>
 
 ### All apps
-<!-- Add images here -->
+<img width="387" height="445" alt="image" src="https://github.com/user-attachments/assets/defd89b9-de70-4621-af2e-2f4550a07c31" />
+
+<hr>
 
 ### Search
-<!-- Add images here -->
+<img width="444" height="620" alt="image" src="https://github.com/user-attachments/assets/8d27dace-7adc-46b3-82ea-728ca057aca1" />
+<img width="439" height="350" alt="image" src="https://github.com/user-attachments/assets/a6b29457-14d6-41bf-b8cf-abcbe4bf296c" />
 
-### Tray and keyboard layout
-<!-- Add images here -->
 
 ## Using it
 
-- **Pin tiles:** right-click an app in Start (tiles or All apps) or in search to pin or unpin it.
+- **Pin tiles:** right-click an app in Start (Most used tiles or All apps) or in the searchbar to pin or unpin it.
 - **Switch tile view:** use the dropdown above the tiles to pick Pinned or Most used.
 - **Search:** click the search box and type. Use the arrow keys and Enter to launch, Esc to close.
 
