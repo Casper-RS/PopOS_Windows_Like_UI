@@ -1767,7 +1767,7 @@ index 00000000..589e8d97
 +    .await;
 +}
 diff --git a/cosmic-panel-button/src/lib.rs b/cosmic-panel-button/src/lib.rs
-index 68c55af0..5329b19d 100644
+index 68c55af0..5829b20f 100644
 --- a/cosmic-panel-button/src/lib.rs
 +++ b/cosmic-panel-button/src/lib.rs
 @@ -19,6 +19,7 @@ use cosmic_config::{Config, CosmicConfigEntry};
@@ -1849,7 +1849,7 @@ index 68c55af0..5329b19d 100644
              },
              Task::none(),
          )
-@@ -143,11 +196,178 @@ impl cosmic::Application for Button {
+@@ -143,11 +196,181 @@ impl cosmic::Application for Button {
              Msg::Surface(a) => {
                  return cosmic::task::message(cosmic::Action::Surface(a));
              }
@@ -1931,7 +1931,10 @@ index 68c55af0..5329b19d 100644
 +            // open popup, keeping only the end of a long query.
 +            let typing = self.popup.is_some();
 +            let placeholder = self.search.query.is_empty();
-+            let query = if placeholder {
++            // While open, the caret takes the place of the placeholder.
++            let query = if placeholder && typing {
++                String::new()
++            } else if placeholder {
 +                "Search...".to_string()
 +            } else {
 +                let chars: Vec<char> = self.search.query.chars().collect();
@@ -2028,7 +2031,7 @@ index 68c55af0..5329b19d 100644
          // currently, panel being anchored to the left or right is a hard
          // override for icon, later if text is updated to wrap, we may
          // use Override::Text to override this behavior
-@@ -201,15 +421,81 @@ impl cosmic::Application for Button {
+@@ -201,15 +424,81 @@ impl cosmic::Application for Button {
      }
  
      fn subscription(&self) -> iced::Subscription<Self::Message> {
@@ -2112,7 +2115,7 @@ index 68c55af0..5329b19d 100644
  pub fn run() -> iced::Result {
      let id = env::args()
          .nth(1)
-@@ -242,3 +528,30 @@ pub fn run() -> iced::Result {
+@@ -242,3 +531,30 @@ pub fn run() -> iced::Result {
      });
      cosmic::applet::run::<Button>(desktop)
  }
