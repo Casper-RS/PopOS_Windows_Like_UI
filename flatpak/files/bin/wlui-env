@@ -6,5 +6,5 @@ export XDG_DATA_HOME="$HOME/.local/share"
 # Host apps and icons come in through /app/share/host*, which link only those
 # folders: the host's COSMIC theme defaults can be older than the toolkit these
 # applets are built with, and would make them fall back to the default theme.
-export XDG_DATA_DIRS="/app/share:$HOME/.local/share/flatpak/exports/share:/var/lib/flatpak/exports/share:/app/share/host-local:/app/share/host:/usr/share"
+export XDG_DATA_DIRS="/app/share:$HOME/.local/share/flatpak/exports/share:/var/lib/flatpak/exports/share:/app/share/host-local:/app/share/host:/var/lib/snapd/desktop:/usr/share"
 export PATH="/app/libexec/wlui-host:$PATH"
