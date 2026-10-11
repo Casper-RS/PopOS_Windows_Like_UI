@@ -44,6 +44,6 @@ This restores your previous panel and shortcuts.
 
 ## Credits
 
-Built on [COSMIC applets](https://github.com/pop-os/cosmic-applets) by System76, <br>
-[Status Hub](https://github.com/marcelogomes90/cosmic-ext-applet-status-hub) by marcelogomes90<br>
-[System Monitor](https://github.com/D-Brox/cosmic-ext-applet-system-monitor) by D-Brox. Licensed under GPL-3.0.
+- Built on [COSMIC applets](https://github.com/pop-os/cosmic-applets) by System76
+- [Status Hub](https://github.com/marcelogomes90/cosmic-ext-applet-status-hub) by marcelogomes90
+- [System Monitor](https://github.com/D-Brox/cosmic-ext-applet-system-monitor) by D-Brox. Licensed under GPL-3.0.
