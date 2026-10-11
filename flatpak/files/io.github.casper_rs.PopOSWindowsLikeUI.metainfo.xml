@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<component type="addon">
+  <id>io.github.casper_rs.PopOSWindowsLikeUI</id>
+  <name>Windows-like UI for COSMIC</name>
+  <summary>Windows-style taskbar applets for the COSMIC desktop</summary>
+  <metadata_license>CC0-1.0</metadata_license>
+  <project_license>GPL-3.0-only</project_license>
+  <url type="homepage">https://github.com/Casper-RS/PopOS_Windows_Like_UI</url>
+  <developer id="io.github.casper_rs"><name>Casper Schotman</name></developer>
+</component>

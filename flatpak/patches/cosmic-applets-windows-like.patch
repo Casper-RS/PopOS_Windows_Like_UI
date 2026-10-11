@@ -1,0 +1,1345 @@
+diff --git a/cosmic-app-list/src/app.rs b/cosmic-app-list/src/app.rs
+index 3e5a3a6d..d55d1e07 100755
+--- a/cosmic-app-list/src/app.rs
++++ b/cosmic-app-list/src/app.rs
+@@ -32,7 +32,7 @@ use cosmic::{
+         advanced::text::{Ellipsize, EllipsizeHeightLimit},
+         clipboard::mime::{AllowedMimeTypes, AsMimeTypes},
+         event::listen_with,
+-        platform_specific::shell::commands::popup::{destroy_popup, get_popup},
++        platform_specific::shell::commands::popup::{destroy_popup, get_popup, reposition},
+         runtime::{core::event, dnd::peek_dnd, platform_specific::wayland::CornerRadius},
+         widget::{
+             Column, Row, column, mouse_area, row,
+@@ -61,7 +61,13 @@ use cosmic_app_list_config::{APP_ID, AppListConfig};
+ use cosmic_protocols::toplevel_info::v1::client::zcosmic_toplevel_handle_v1::State;
+ use futures::future::pending;
+ use rustc_hash::FxHashMap;
+-use std::{borrow::Cow, path::PathBuf, rc::Rc, str::FromStr, time::Duration};
++use std::{
++    borrow::Cow,
++    path::PathBuf,
++    rc::Rc,
++    str::FromStr,
++    time::{Duration, Instant},
++};
+ use switcheroo_control::Gpu;
+ use tokio::time::sleep;
+ use url::Url;
+@@ -377,6 +383,15 @@ struct CosmicAppList {
+     output_list: FxHashMap<WlOutput, OutputInfo>,
+     locales: Vec<String>,
+     hovered_toplevel: Option<ExtForeignToplevelHandleV1>,
++    // Windows-style hover previews: dock item under the pointer, whether the
++    // pointer is over the preview popup, and a generation counter to cancel
++    // stale delayed open/close checks.
++    hover_icon: Option<u32>,
++    hover_popup: bool,
++    hover_gen: u32,
++    hover_opening: bool,
++    // Fade of the window-preview popup: (start, opening). None = fully shown.
++    popup_anim: Option<(Instant, bool)>,
+     overflow_favorites_popup: Option<window::Id>,
+     overflow_active_popup: Option<window::Id>,
+ }
+@@ -385,6 +400,14 @@ struct CosmicAppList {
+ pub enum PopupType {
+     RightClickMenu,
+     ToplevelList,
++    // App name, shown on hover for apps without open windows.
++    Tooltip,
++}
++
++impl PopupType {
++    fn is_hover(&self) -> bool {
++        matches!(self, PopupType::ToplevelList | PopupType::Tooltip)
++    }
+ }
+ 
+ #[derive(Debug, Clone)]
+@@ -396,6 +419,13 @@ enum Message {
+     Pressed(window::Id),
+     ToplevelListPopup(u32, window::Id),
+     ToplevelHoverChanged(ExtForeignToplevelHandleV1, bool),
++    IconHover(u32, window::Id, bool),
++    PopupHover(bool),
++    HoverOpen(u32, window::Id, u32),
++    HoverClose(u32),
++    CursorLeft(window::Id),
++    PointerMoved(window::Id, iced::Point),
++    AnimTick,
+     GpuRequest(Option<Vec<Gpu>>),
+     CloseRequested(window::Id),
+     ClosePopup,
+@@ -488,21 +518,23 @@ fn toplevel_button<'a>(
+     handle: ExtForeignToplevelHandleV1,
+     is_focused: bool,
+     is_hovered: bool,
++    alpha: f32,
+ ) -> Element<'a, Message> {
+     let border = 1.0;
+     let preview = column![
+         container(if let Some(img) = img {
+-            Element::from(Image::new(Handle::from_rgba(
+-                img.width,
+-                img.height,
+-                img.img.clone(),
+-            )))
++            Element::from(
++                Image::new(Handle::from_rgba(img.width, img.height, img.img.clone()))
++                    .opacity(alpha),
++            )
+         } else {
+-            Image::new(Handle::from_rgba(1, 1, [0u8, 0u8, 0u8, 255u8].as_slice())).into()
++            Image::new(Handle::from_rgba(1, 1, [0u8, 0u8, 0u8, 255u8].as_slice()))
++                .opacity(alpha)
++                .into()
+         })
+         .class(Container::custom(move |theme| container::Style {
+             border: Border {
+-                color: theme.cosmic().bg_divider().into(),
++                color: with_alpha(theme.cosmic().bg_divider().into(), alpha),
+                 width: border,
+                 radius: 1.0.into(),
+             },
+@@ -535,7 +567,7 @@ fn toplevel_button<'a>(
+     stack![preview, close_button_overlay]
+         .apply(button::custom)
+         .on_press(Message::Toggle(handle.clone()))
+-        .class(window_menu_style(is_focused))
++        .class(window_menu_style(is_focused, alpha))
+         .width(Length::Fixed(TOPLEVEL_BUTTON_WIDTH))
+         .height(Length::Fixed(TOPLEVEL_BUTTON_HEIGHT))
+         .padding(4)
+@@ -547,7 +579,7 @@ fn toplevel_button<'a>(
+         .apply(Element::from)
+ }
+ 
+-fn window_menu_style(selected: bool) -> cosmic::theme::Button {
++fn window_menu_style(selected: bool, alpha: f32) -> cosmic::theme::Button {
+     let radius = theme::active()
+         .cosmic()
+         .radius_m()
+@@ -558,12 +590,17 @@ fn window_menu_style(selected: bool) -> cosmic::theme::Button {
+             let a = button::Catalog::active(theme, focused, selected, &Button::AppletMenu);
+             button::Style {
+                 background: if selected {
+-                    Some(Background::Color(
++                    Some(Background::Color(with_alpha(
+                         theme.cosmic().icon_button.selected_state_color().into(),
+-                    ))
++                        alpha,
++                    )))
+                 } else {
+-                    a.background
++                    a.background.map(|b| match b {
++                        Background::Color(c) => Background::Color(with_alpha(c, alpha)),
++                        other => other,
++                    })
+                 },
++                text_color: a.text_color.map(|c| with_alpha(c, alpha)),
+                 border_radius: radius.into(),
+                 outline_width: 0.0,
+                 ..a
+@@ -841,6 +878,22 @@ impl CosmicAppList {
+         self.currently_active_toplevel().contains(handle)
+     }
+ 
++    /// Opacity of the window-preview popup for the current fade.
++    fn popup_alpha(&self) -> f32 {
++        match self.popup_anim {
++            None => 1.0,
++            Some((start, opening)) => {
++                let (dur, ease): (Duration, fn(f32) -> f32) = if opening {
++                    (POPUP_FADE_IN, |t| 1.0 - (1.0 - t).powi(3))
++                } else {
++                    (POPUP_FADE_OUT, |t| 1.0 - t * t)
++                };
++                let t = (start.elapsed().as_secs_f32() / dur.as_secs_f32()).clamp(0.0, 1.0);
++                ease(t)
++            }
++        }
++    }
++
+     // Check if a specific toplevel button is currently hovered
+     fn is_hovered(&self, handle: &ExtForeignToplevelHandleV1) -> bool {
+         self.hovered_toplevel.as_ref() == Some(handle)
+@@ -998,50 +1051,23 @@ impl cosmic::Application for CosmicAppList {
+                         dock_item: toplevel_group.clone(),
+                         popup_type: PopupType::ToplevelList,
+                     });
++                    self.popup_anim = Some((Instant::now(), true));
+                     let popup_task =
+                         cosmic::surface::surface_task(cosmic::surface::action::app_popup(
+                             |_| Default::default(),
+                             move |app: &mut Self| {
+-                                let mut popup_settings = app.core.applet.get_popup_settings(
++                                let mut popup_settings = toplevel_list_popup_settings(
++                                    app,
+                                     parent_window_id,
+                                     new_id,
+-                                    None,
+-                                    None,
+-                                    None,
++                                    rectangle,
+                                 );
+-                                let iced::Rectangle {
+-                                    x,
+-                                    y,
+-                                    width,
+-                                    height,
+-                                } = rectangle;
+-                                popup_settings.positioner.anchor_rect = iced::Rectangle::<i32> {
+-                                    x: x as i32,
+-                                    y: y as i32,
+-                                    width: width as i32,
+-                                    height: height as i32,
+-                                };
+-                                let max_windows = 7.0;
+-                                let window_spacing = 8.0;
+-                                popup_settings.positioner.size_limits = match app.core.applet.anchor
+-                                {
+-                                    PanelAnchor::Right | PanelAnchor::Left => Limits::NONE
+-                                        .min_width(100.0)
+-                                        .min_height(30.0)
+-                                        .max_width(window_spacing * 2.0 + TOPLEVEL_BUTTON_WIDTH)
+-                                        .max_height(
+-                                            TOPLEVEL_BUTTON_HEIGHT * max_windows
+-                                                + window_spacing * (max_windows + 1.0),
+-                                        ),
+-                                    PanelAnchor::Bottom | PanelAnchor::Top => Limits::NONE
+-                                        .min_width(30.0)
+-                                        .min_height(100.0)
+-                                        .max_width(
+-                                            TOPLEVEL_BUTTON_WIDTH * max_windows
+-                                                + window_spacing * (max_windows + 1.0),
+-                                        )
+-                                        .max_height(window_spacing * 2.0 + TOPLEVEL_BUTTON_HEIGHT),
+-                                };
++                                // A hover has no input serial to grab with, and
++                                // grabbing would steal keyboard focus.
++                                if app.hover_opening {
++                                    popup_settings.grab = false;
++                                    app.hover_opening = false;
++                                }
+                                 popup_settings
+                             },
+                             None,
+@@ -1050,6 +1076,205 @@ impl cosmic::Application for CosmicAppList {
+                     return popup_task;
+                 }
+             }
++            Message::IconHover(id, parent_window_id, entering) => {
++                // Exit/enter order between neighbouring icons depends on the
++                // direction of movement; a late exit from an icon we already
++                // left must not cancel the pending open of the new one.
++                if !entering && self.hover_icon != Some(id) {
++                    return Task::none();
++                }
++                self.hover_gen = self.hover_gen.wrapping_add(1);
++                let generation = self.hover_gen;
++                if entering {
++                    self.hover_icon = Some(id);
++                    let switching = self
++                        .popup
++                        .as_ref()
++                        .is_some_and(|p| p.popup_type.is_hover());
++                    let delay = if switching { 50 } else { 400 };
++                    return Task::perform(sleep(Duration::from_millis(delay)), move |()| {
++                        cosmic::Action::App(Message::HoverOpen(id, parent_window_id, generation))
++                    });
++                }
++                self.hover_icon = None;
++                return Task::perform(sleep(Duration::from_millis(400)), move |()| {
++                    cosmic::Action::App(Message::HoverClose(generation))
++                });
++            }
++            Message::PopupHover(entering) => {
++                self.hover_popup = entering;
++                self.hover_gen = self.hover_gen.wrapping_add(1);
++                if !entering {
++                    let generation = self.hover_gen;
++                    return Task::perform(sleep(Duration::from_millis(400)), move |()| {
++                        cosmic::Action::App(Message::HoverClose(generation))
++                    });
++                }
++            }
++            Message::HoverOpen(id, parent_window_id, generation) => {
++                if generation != self.hover_gen
++                    || self.hover_icon != Some(id)
++                    || self.dnd_source.is_some()
++                {
++                    return Task::none();
++                }
++                let Some(group) = self
++                    .active_list
++                    .iter()
++                    .chain(self.pinned_list.iter())
++                    .find(|t| t.id == id)
++                    .cloned()
++                else {
++                    return Task::none();
++                };
++                let wanted = if group.toplevels.is_empty() {
++                    PopupType::Tooltip
++                } else {
++                    PopupType::ToplevelList
++                };
++                let Some(rectangle) = self.rectangles.get(&group.id.into()).copied() else {
++                    return Task::none();
++                };
++                let mut close = Task::none();
++                match &self.popup {
++                    Some(p) if p.popup_type == wanted => {
++                        if p.dock_item.id == id {
++                            // Hovered back during the fade-out: fade in again.
++                            if matches!(self.popup_anim, Some((_, false))) {
++                                self.popup_anim = Some((Instant::now(), true));
++                            }
++                            return Task::none();
++                        }
++                        // Slide the open popup over to the new icon instead of
++                        // destroying and recreating it (which flickers).
++                        if wanted == PopupType::ToplevelList {
++                            for (info, _) in &group.toplevels {
++                                if let Some(tx) = self.wayland_sender.as_ref() {
++                                    let _ = tx.send(WaylandRequest::Screencopy(
++                                        info.foreign_toplevel.clone(),
++                                    ));
++                                }
++                            }
++                        }
++                        let popup_id = p.id;
++                        let settings = hover_popup_settings(
++                            self,
++                            &wanted,
++                            parent_window_id,
++                            popup_id,
++                            rectangle,
++                        );
++                        if let Some(p) = self.popup.as_mut() {
++                            p.dock_item = group;
++                        }
++                        if matches!(self.popup_anim, Some((_, false))) {
++                            self.popup_anim = Some((Instant::now(), true));
++                        }
++                        return reposition(popup_id, settings.positioner);
++                    }
++                    // Previews <-> tooltip: replace the popup.
++                    Some(p) if p.popup_type.is_hover() => {
++                        close = destroy_popup(p.id);
++                        self.popup = None;
++                    }
++                    // Leave a right-click menu alone.
++                    Some(_) => return Task::none(),
++                    None => {}
++                }
++                self.hover_popup = false;
++                if wanted == PopupType::ToplevelList {
++                    self.hover_opening = true;
++                    let open = self.update(Message::ToplevelListPopup(id, parent_window_id));
++                    return Task::batch([close, open]);
++                }
++                let new_id = window::Id::unique();
++                self.popup = Some(Popup {
++                    parent: parent_window_id,
++                    id: new_id,
++                    dock_item: group,
++                    popup_type: PopupType::Tooltip,
++                });
++                self.popup_anim = Some((Instant::now(), true));
++                let open = cosmic::surface::surface_task(cosmic::surface::action::app_popup(
++                    |_| Default::default(),
++                    move |app: &mut Self| {
++                        hover_popup_settings(
++                            app,
++                            &PopupType::Tooltip,
++                            parent_window_id,
++                            new_id,
++                            rectangle,
++                        )
++                    },
++                    None,
++                ));
++                return Task::batch([close, open]);
++            }
++            Message::PointerMoved(surface, position) => {
++                // Hit-test the dock items ourselves: per-icon mouse_area hover
++                // events stop arriving while a popup is open, which made it
++                // impossible to slide from one app's previews to the next.
++                if self.core.main_window_id() != Some(surface) {
++                    return Task::none();
++                }
++                let under = self.rectangles.iter().find_map(|(k, r)| match k {
++                    DockItemId::Item(id)
++                        if r.contains(position)
++                            && self
++                                .active_list
++                                .iter()
++                                .chain(self.pinned_list.iter())
++                                .any(|t| t.id == *id) =>
++                    {
++                        Some(*id)
++                    }
++                    _ => None,
++                });
++                if under == self.hover_icon {
++                    return Task::none();
++                }
++                return match (under, self.hover_icon) {
++                    (Some(id), _) => self.update(Message::IconHover(id, surface, true)),
++                    (None, Some(old)) => self.update(Message::IconHover(old, surface, false)),
++                    (None, None) => Task::none(),
++                };
++            }
++            Message::CursorLeft(surface) => {
++                if self.popup.as_ref().is_some_and(|p| p.id == surface) {
++                    self.hover_popup = false;
++                } else {
++                    self.hover_icon = None;
++                }
++                self.hover_gen = self.hover_gen.wrapping_add(1);
++                let generation = self.hover_gen;
++                return Task::perform(sleep(Duration::from_millis(400)), move |()| {
++                    cosmic::Action::App(Message::HoverClose(generation))
++                });
++            }
++            Message::HoverClose(generation) => {
++                if generation != self.hover_gen || self.hover_icon.is_some() || self.hover_popup {
++                    return Task::none();
++                }
++                if let Some(p) = &self.popup
++                    && p.popup_type.is_hover()
++                    && !matches!(self.popup_anim, Some((_, false)))
++                {
++                    self.popup_anim = Some((Instant::now(), false));
++                }
++            }
++            Message::AnimTick => match self.popup_anim {
++                Some((start, true)) if start.elapsed() >= POPUP_FADE_IN => {
++                    self.popup_anim = None;
++                }
++                Some((start, false)) if start.elapsed() >= POPUP_FADE_OUT => {
++                    self.popup_anim = None;
++                    if let Some(p) = self.popup.take() {
++                        self.hover_popup = false;
++                        return destroy_popup(p.id);
++                    }
++                }
++                _ => {}
++            },
+             Message::ToplevelHoverChanged(handle, entering) => {
+                 match (entering, &self.hovered_toplevel) {
+                     (true, _) => self.hovered_toplevel = Some(handle),
+@@ -1503,6 +1728,12 @@ impl cosmic::Application for CosmicAppList {
+                                     .map(|(k, v)| (k.clone(), v.clone())),
+                             );
+                         }
++                        // Inside a Flatpak, launch on the host instead.
++                        let (exec, envs, terminal) = if std::env::var_os("FLATPAK_ID").is_some() {
++                            host_exec(&exec, envs, terminal)
++                        } else {
++                            (exec, envs, terminal)
++                        };
+                         tokio::spawn(async move {
+                             cosmic::desktop::spawn_desktop_exec(
+                                 exec,
+@@ -1540,6 +1771,7 @@ impl cosmic::Application for CosmicAppList {
+                 }
+             },
+             Message::ClosePopup => {
++                self.hover_popup = false;
+                 if let Some(p) = self.popup.take() {
+                     return destroy_popup(p.id);
+                 }
+@@ -1810,7 +2042,7 @@ impl cosmic::Application for CosmicAppList {
+                         dock_item.as_icon(
+                             &self.core.applet,
+                             self.rectangle_tracker.as_ref(),
+-                            self.popup.is_none(),
++                            !self.popup.as_ref().is_some_and(|p| p.popup_type == PopupType::RightClickMenu),
+                             self.config.enable_drag_source,
+                             self.gpus.as_deref(),
+                             filtered_is_focused,
+@@ -1823,7 +2055,7 @@ impl cosmic::Application for CosmicAppList {
+                             .full_name(&self.locales)
+                             .unwrap_or_default()
+                             .into_owned(),
+-                        self.popup.is_some(),
++                        true, // replaced by the hover tooltip popup
+                         Message::Surface,
+                         None,
+                     )
+@@ -1923,7 +2155,7 @@ impl cosmic::Application for CosmicAppList {
+                             dock_item.as_icon(
+                                 &self.core.applet,
+                                 self.rectangle_tracker.as_ref(),
+-                                self.popup.is_none(),
++                                !self.popup.as_ref().is_some_and(|p| p.popup_type == PopupType::RightClickMenu),
+                                 self.config.enable_drag_source,
+                                 self.gpus.as_deref(),
+                                 filtered_is_focused,
+@@ -1936,7 +2168,7 @@ impl cosmic::Application for CosmicAppList {
+                                 .full_name(&self.locales)
+                                 .unwrap_or_default()
+                                 .into_owned(),
+-                            self.popup.is_some(),
++                            true, // replaced by the hover tooltip popup
+                             Message::Surface,
+                             None,
+                         )
+@@ -2251,7 +2483,28 @@ impl cosmic::Application for CosmicAppList {
+                         )
+                         .into()
+                 }
+-                PopupType::ToplevelList => match self.core.applet.anchor {
++                PopupType::Tooltip => {
++                    let alpha = self.popup_alpha();
++                    let name = dock_item
++                        .desktop_info
++                        .full_name(&self.locales)
++                        .unwrap_or_default()
++                        .into_owned();
++                    mouse_area(
++                        fading_popup_container(
++                            &self.core.applet,
++                            container(text::body(name)).padding([6, 12]),
++                            alpha,
++                        )
++                        .limits(Limits::NONE.min_width(1.).min_height(1.).max_width(400.)),
++                    )
++                    .on_enter(Message::PopupHover(true))
++                    .on_exit(Message::PopupHover(false))
++                    .into()
++                }
++                PopupType::ToplevelList => {
++                let alpha = self.popup_alpha();
++                match self.core.applet.anchor {
+                     PanelAnchor::Left | PanelAnchor::Right => {
+                         let mut content =
+                             column![].padding(8).align_x(Alignment::Center).spacing(8);
+@@ -2262,13 +2515,17 @@ impl cosmic::Application for CosmicAppList {
+                                 info.foreign_toplevel.clone(),
+                                 self.is_focused(&info.foreign_toplevel),
+                                 self.is_hovered(&info.foreign_toplevel),
++                                alpha,
+                             ));
+                         }
+-                        self.core
+-                            .applet
+-                            .popup_container(content)
+-                            .limits(Limits::NONE.min_width(1.).min_height(1.).max_height(1000.))
+-                            .into()
++                        mouse_area(
++                            fading_popup_container(&self.core.applet, content, alpha).limits(
++                                Limits::NONE.min_width(1.).min_height(1.).max_height(1000.),
++                            ),
++                        )
++                        .on_enter(Message::PopupHover(true))
++                        .on_exit(Message::PopupHover(false))
++                        .into()
+                     }
+                     PanelAnchor::Bottom | PanelAnchor::Top => {
+                         let mut content = row![].padding(8).align_y(Alignment::Center).spacing(8);
+@@ -2279,15 +2536,20 @@ impl cosmic::Application for CosmicAppList {
+                                 info.foreign_toplevel.clone(),
+                                 self.is_focused(&info.foreign_toplevel),
+                                 self.is_hovered(&info.foreign_toplevel),
++                                alpha,
+                             ));
+                         }
+-                        self.core
+-                            .applet
+-                            .popup_container(content)
+-                            .limits(Limits::NONE.min_width(1.).min_height(1.).max_height(1000.))
+-                            .into()
++                        mouse_area(
++                            fading_popup_container(&self.core.applet, content, alpha).limits(
++                                Limits::NONE.min_width(1.).min_height(1.).max_height(1000.),
++                            ),
++                        )
++                        .on_enter(Message::PopupHover(true))
++                        .on_exit(Message::PopupHover(false))
++                        .into()
+                     }
+-                },
++                }
++                }
+             }
+         } else if self
+             .overflow_active_popup
+@@ -2505,7 +2767,13 @@ impl cosmic::Application for CosmicAppList {
+     }
+ 
+     fn subscription(&self) -> Subscription<Message> {
++        let anim = if self.popup_anim.is_some() {
++            cosmic::iced::window::frames().map(|_| Message::AnimTick)
++        } else {
++            Subscription::none()
++        };
+         Subscription::batch([
++            anim,
+             wayland_subscription().map(Message::Wayland),
+             listen_with(|e, _, id| match e {
+                 cosmic::iced::core::Event::PlatformSpecific(event::PlatformSpecific::Wayland(
+@@ -2517,6 +2785,14 @@ impl cosmic::Application for CosmicAppList {
+                 cosmic::iced::core::Event::Mouse(
+                     cosmic::iced::core::mouse::Event::ButtonPressed(_),
+                 ) => Some(Message::Pressed(id)),
++                // mouse_area never sends on_exit when the pointer leaves the
++                // whole surface, so track that here for hover previews.
++                cosmic::iced::core::Event::Mouse(cosmic::iced::core::mouse::Event::CursorMoved {
++                    position,
++                }) => Some(Message::PointerMoved(id, position)),
++                cosmic::iced::core::Event::Mouse(cosmic::iced::core::mouse::Event::CursorLeft) => {
++                    Some(Message::CursorLeft(id))
++                }
+                 _ => None,
+             }),
+             rectangle_tracker_subscription(0).map(|update| Message::Rectangle(update.1)),
+@@ -2596,3 +2872,141 @@ impl AsMimeTypes for DndPathBuf {
+         Some(Cow::Owned(self.0.to_str()?.as_bytes().to_vec()))
+     }
+ }
++
++
++fn hover_popup_settings(
++    app: &CosmicAppList,
++    popup_type: &PopupType,
++    parent_window_id: window::Id,
++    new_id: window::Id,
++    rectangle: iced::Rectangle,
++) -> cosmic::iced::runtime::platform_specific::wayland::popup::SctkPopupSettings {
++    let mut settings = toplevel_list_popup_settings(app, parent_window_id, new_id, rectangle);
++    // Hover popups never grab: no input serial, and no focus stealing.
++    settings.grab = false;
++    if *popup_type == PopupType::Tooltip {
++        settings.positioner.size_limits = Limits::NONE
++            .min_width(1.0)
++            .min_height(1.0)
++            .max_width(400.0)
++            .max_height(100.0);
++    }
++    settings
++}
++
++fn toplevel_list_popup_settings(
++    app: &CosmicAppList,
++    parent_window_id: window::Id,
++    new_id: window::Id,
++    rectangle: iced::Rectangle,
++) -> cosmic::iced::runtime::platform_specific::wayland::popup::SctkPopupSettings {
++    let mut popup_settings = app.core.applet.get_popup_settings(
++        parent_window_id,
++        new_id,
++        None,
++        None,
++        None,
++    );
++    let iced::Rectangle {
++        x,
++        y,
++        width,
++        height,
++    } = rectangle;
++    popup_settings.positioner.anchor_rect = iced::Rectangle::<i32> {
++        x: x as i32,
++        y: y as i32,
++        width: width as i32,
++        height: height as i32,
++    };
++    let max_windows = 7.0;
++    let window_spacing = 8.0;
++    popup_settings.positioner.size_limits = match app.core.applet.anchor
++    {
++        PanelAnchor::Right | PanelAnchor::Left => Limits::NONE
++            .min_width(100.0)
++            .min_height(30.0)
++            .max_width(window_spacing * 2.0 + TOPLEVEL_BUTTON_WIDTH)
++            .max_height(
++                TOPLEVEL_BUTTON_HEIGHT * max_windows
++                    + window_spacing * (max_windows + 1.0),
++            ),
++        PanelAnchor::Bottom | PanelAnchor::Top => Limits::NONE
++            .min_width(30.0)
++            .min_height(100.0)
++            .max_width(
++                TOPLEVEL_BUTTON_WIDTH * max_windows
++                    + window_spacing * (max_windows + 1.0),
++            )
++            .max_height(window_spacing * 2.0 + TOPLEVEL_BUTTON_HEIGHT),
++    };
++    popup_settings
++}
++const POPUP_FADE_IN: Duration = Duration::from_millis(160);
++const POPUP_FADE_OUT: Duration = Duration::from_millis(110);
++
++fn with_alpha(mut c: cosmic::iced::Color, alpha: f32) -> cosmic::iced::Color {
++    c.a *= alpha;
++    c
++}
++
++/// Same look as `applet.popup_container`, but with a fading background.
++fn fading_popup_container<'a>(
++    applet: &cosmic::applet::Context,
++    content: impl Into<Element<'a, Message>>,
++    alpha: f32,
++) -> cosmic::widget::autosize::Autosize<'a, Message, cosmic::Theme, cosmic::Renderer> {
++    use cosmic::iced::alignment::{Horizontal, Vertical};
++    static AUTOSIZE_ID: std::sync::LazyLock<cosmic::widget::Id> =
++        std::sync::LazyLock::new(|| cosmic::widget::Id::new("cosmic-applet-autosize"));
++    let (vertical_align, horizontal_align) = match applet.anchor {
++        PanelAnchor::Left => (Vertical::Center, Horizontal::Left),
++        PanelAnchor::Right => (Vertical::Center, Horizontal::Right),
++        PanelAnchor::Top => (Vertical::Top, Horizontal::Center),
++        PanelAnchor::Bottom => (Vertical::Bottom, Horizontal::Center),
++    };
++    cosmic::widget::autosize::autosize(
++        container(container(content).class(Container::custom(move |theme| {
++            let cosmic = theme.cosmic();
++            let bg = cosmic.background(theme.transparent);
++            container::Style {
++                text_color: Some(with_alpha(bg.on.into(), alpha)),
++                icon_color: Some(with_alpha(bg.on.into(), alpha)),
++                background: Some(Background::Color(with_alpha(bg.base.into(), alpha))),
++                border: Border {
++                    radius: cosmic.corner_radii.radius_m.into(),
++                    width: 1.0,
++                    color: with_alpha(bg.divider.into(), alpha),
++                },
++                ..Default::default()
++            }
++        })))
++        .height(Length::Shrink)
++        .align_x(horizontal_align)
++        .align_y(vertical_align),
++        AUTOSIZE_ID.clone(),
++    )
++}
++
++/// Wrap a desktop Exec line so it runs on the host through `flatpak-spawn`,
++/// forwarding the launch environment (activation token, GPU selection).
++fn host_exec(
++    exec: &str,
++    envs: Vec<(String, String)>,
++    terminal: bool,
++) -> (String, Vec<(String, String)>, bool) {
++    let exec = if terminal {
++        format!("cosmic-term -e {exec}")
++    } else {
++        exec.to_string()
++    };
++    let mut wrapped = String::from("flatpak-spawn --host");
++    for (k, v) in &envs {
++        wrapped.push(' ');
++        // Single-quote for the desktop-exec parser.
++        wrapped.push_str(&format!("'--env={k}={v}'", v = v.replace('\'', "")));
++    }
++    wrapped.push(' ');
++    wrapped.push_str(&exec);
++    (wrapped, Vec::new(), false)
++}
+diff --git a/cosmic-applet-input-sources/src/lib.rs b/cosmic-applet-input-sources/src/lib.rs
+index d22d3e7b..77971a5e 100644
+--- a/cosmic-applet-input-sources/src/lib.rs
++++ b/cosmic-applet-input-sources/src/lib.rs
+@@ -15,7 +15,7 @@ use cosmic::{
+     iced::Subscription,
+     iced::core::window,
+     iced::{
+-        self, Rectangle, Task,
++        self, Alignment, Length, Rectangle, Task,
+         event::wayland::{Event as WaylandEvent, OutputEvent},
+         platform_specific::shell::commands::popup::{destroy_popup, get_popup},
+         window::Id,
+@@ -75,6 +75,7 @@ pub fn run() -> cosmic::iced::Result {
+ #[derive(Debug, Clone, Eq, PartialEq)]
+ pub struct ActiveLayout {
+     layout: String,
++    short: String,
+     description: String,
+     variant: String,
+ }
+@@ -219,20 +220,31 @@ impl cosmic::Application for Window {
+     }
+ 
+     fn view(&self) -> Element<'_, Self::Message> {
+-        let applet_text = if let Some(l) = self.active_layouts.get(self.current_layout) {
+-            if !l.variant.is_empty() {
+-                format!("{} ({})", l.layout, l.variant)
+-            } else {
+-                l.layout.clone()
+-            }
++        // Windows-style indicator: language on top, region below (e.g. EN / US).
++        let (top, bottom) = match self.active_layouts.get(self.current_layout) {
++            Some(l) => (l.short.clone(), l.layout.to_uppercase()),
++            None => (String::new(), String::new()),
++        };
++        // Scale with the panel size; tuned for the M (28px icon) size.
++        let k = f32::from(self.core.applet.suggested_size(true).1) / 28.0;
++        let content = widget::column::with_capacity(2)
++            .push(widget::text(top).size(15.0 * k).line_height(1.0).font(cosmic::font::bold()))
++            .push(widget::text(bottom).size(15.0 * k).line_height(1.0).font(cosmic::font::bold()))
++            .align_x(Alignment::Center);
++        let suggested = self.core.applet.suggested_size(true);
++        let (major, minor) = self.core.applet.suggested_padding(true);
++        let (h_pad, v_pad) = if self.core.applet.is_horizontal() {
++            (major, minor)
+         } else {
+-            String::new()
++            (minor, major)
+         };
+-        let input_source_text = self.core.applet.text(applet_text);
+-        let button = self
+-            .core
+-            .applet
+-            .text_button(input_source_text, Message::TogglePopup);
++        let button = widget::button::custom(
++            widget::container(content)
++                .center_y(Length::Fixed(f32::from(suggested.1 + 2 * v_pad))),
++        )
++        .on_press_down(Message::TogglePopup)
++        .padding([0, h_pad])
++        .class(cosmic::theme::Button::AppletIcon);
+         autosize::autosize(
+             if let Some(tracker) = self.rectangle_tracker.as_ref() {
+                 Element::from(tracker.container(0, button).ignore_bounds(true))
+@@ -336,6 +348,7 @@ impl Window {
+ 
+                 if variant.is_empty() {
+                     let active_layout = ActiveLayout {
++                        short: layout_short(xkb_layout),
+                         description: xkb_layout.description().to_owned(),
+                         layout: layout.to_owned(),
+                         variant: variant.to_owned(),
+@@ -355,6 +368,7 @@ impl Window {
+                     }
+ 
+                     let active_layout = ActiveLayout {
++                        short: layout_short(xkb_layout),
+                         description: xkb_variant.description().to_owned(),
+                         layout: layout.to_owned(),
+                         variant: variant.to_owned(),
+@@ -369,3 +383,12 @@ impl Window {
+         active_layouts
+     }
+ }
++
++fn layout_short(layout: &xkb_data::KeyboardLayout) -> String {
++    layout
++        .config_item
++        .short_description
++        .as_deref()
++        .unwrap_or(layout.name())
++        .to_uppercase()
++}
+diff --git a/cosmic-applet-power/src/lib.rs b/cosmic-applet-power/src/lib.rs
+index c75d3e03..251fc9c8 100644
+--- a/cosmic-applet-power/src/lib.rs
++++ b/cosmic-applet-power/src/lib.rs
+@@ -16,8 +16,16 @@ use cosmic::{
+         window,
+     },
+     surface, theme,
+-    widget::{Space, button, divider, icon, space, text},
++    widget::{
++        Space, button, divider, icon,
++        rectangle_tracker::{RectangleTracker, RectangleUpdate, rectangle_tracker_subscription},
++        space, text,
++    },
++};
++use cosmic::cctk::sctk::reexports::protocols::xdg::shell::client::xdg_positioner::{
++    Anchor, Gravity,
+ };
++use cosmic::Apply as _;
+ use std::sync::LazyLock;
+ 
+ use logind_zbus::{
+@@ -48,6 +56,10 @@ struct Power {
+     core: cosmic::app::Core,
+     icon_name: String,
+     popup: Option<window::Id>,
++    // "Power >" submenu (Sleep / Restart / Power off), a child of `popup`.
++    power_submenu: Option<window::Id>,
++    power_row: Option<iced::Rectangle>,
++    rectangle_tracker: Option<RectangleTracker<u32>>,
+     token_tx: Option<calloop::channel::Sender<TokenRequest>>,
+     subsurface_id: window::Id,
+ }
+@@ -83,6 +95,11 @@ enum Message {
+     Closed(window::Id),
+     Token(TokenUpdate),
+     Surface(surface::Action<Message>),
++    OpenPowerSubmenu,
++    ClosePowerSubmenu,
++    OpenAllApps,
++    OpenTaskView,
++    Rectangle(RectangleUpdate<u32>),
+ }
+ 
+ impl cosmic::Application for Power {
+@@ -107,6 +124,9 @@ impl cosmic::Application for Power {
+                 subsurface_id: window::Id::unique(),
+                 token_tx: None,
+                 popup: Option::default(),
++                power_submenu: None,
++                power_row: None,
++                rectangle_tracker: None,
+             },
+             Task::none(),
+         )
+@@ -120,9 +140,11 @@ impl cosmic::Application for Power {
+         match message {
+             Message::TogglePopup => {
+                 if let Some(p) = self.popup.take() {
+-                    return cosmic::surface::surface_task(cosmic::surface::action::destroy_popup(
+-                        p,
+-                    ));
++                    let sub = self.close_power_submenu();
++                    return Task::batch([
++                        sub,
++                        cosmic::surface::surface_task(cosmic::surface::action::destroy_popup(p)),
++                    ]);
+                 } else {
+                     return cosmic::surface::surface_task(cosmic::surface::action::app_popup(
+                         |_| Default::default(),
+@@ -183,8 +205,62 @@ impl cosmic::Application for Power {
+             Message::Closed(id) => {
+                 if self.popup == Some(id) {
+                     self.popup = None;
++                    return self.close_power_submenu();
++                }
++                if self.power_submenu == Some(id) {
++                    self.power_submenu = None;
++                }
++            }
++            Message::OpenPowerSubmenu => {
++                let (Some(parent), Some(row), None) =
++                    (self.popup, self.power_row, self.power_submenu)
++                else {
++                    return Task::none();
++                };
++                let new_id = window::Id::unique();
++                self.power_submenu = Some(new_id);
++                let mut settings =
++                    self.core
++                        .applet
++                        .get_popup_settings(parent, new_id, None, None, None);
++                // Open to the right of the "Power" row, top-aligned with it.
++                settings.positioner.anchor_rect = iced::Rectangle {
++                    x: row.x as i32,
++                    y: row.y as i32,
++                    width: row.width as i32,
++                    height: row.height as i32,
++                };
++                settings.positioner.anchor = Anchor::TopRight;
++                settings.positioner.gravity = Gravity::BottomRight;
++                settings.positioner.offset = (4, -8);
++                settings.positioner.size_limits = iced::Limits::NONE
++                    .min_width(1.0)
++                    .min_height(1.0)
++                    .max_width(240.0)
++                    .max_height(400.0);
++                // Opened on hover: no input serial to grab with.
++                settings.grab = false;
++                return get_popup(settings);
++            }
++            Message::ClosePowerSubmenu => return self.close_power_submenu(),
++            Message::OpenAllApps | Message::OpenTaskView => {
++                let cmd = if matches!(message, Message::OpenTaskView) {
++                    "cosmic-workspaces"
++                } else {
++                    "cosmic-app-library"
++                };
++                if let Err(err) = std::process::Command::new(cmd).spawn() {
++                    tracing::error!("Failed to spawn {cmd}. {err:?}");
++                }
++                if let Some(p) = self.popup.take() {
++                    let sub = self.close_power_submenu();
++                    return Task::batch([sub, destroy_popup(p)]);
+                 }
+             }
++            Message::Rectangle(u) => match u {
++                RectangleUpdate::Init(tracker) => self.rectangle_tracker = Some(tracker),
++                RectangleUpdate::Rectangle((_, r)) => self.power_row = Some(r),
++            },
+             Message::Token(u) => match u {
+                 TokenUpdate::Init(tx) => {
+                     self.token_tx = Some(tx);
+@@ -209,6 +285,21 @@ impl cosmic::Application for Power {
+     }
+ 
+     fn view(&self) -> Element<'_, Message> {
++        // Started with `start` as argument: Windows-style Start corner that
++        // shows the distro logo instead of the shutdown icon.
++        if std::env::args().nth(1).is_some_and(|a| a == "start") {
++            let size = self.core.applet.suggested_size(false).0;
++            return self
++                .core
++                .applet
++                .icon_button_from_handle(
++                    cosmic::widget::icon::from_name("distributor-logo-pop-os")
++                        .size(size)
++                        .handle(),
++                )
++                .on_press_down(Message::TogglePopup)
++                .into();
++        }
+         self.core
+             .applet
+             .icon_button(&self.icon_name)
+@@ -218,14 +309,47 @@ impl cosmic::Application for Power {
+ 
+     fn view_window(&self, id: window::Id) -> Element<'_, Message> {
+         let Spacing {
+-            space_xxs,
+-            space_s,
+-            space_m,
+-            ..
++            space_xxs, space_s, ..
+         } = theme::active().cosmic().spacing;
+ 
++        if self.power_submenu == Some(id) {
++            let item = |icon_name: &'static str, label: &'static str, action| {
++                menu_button(
++                    row![text_icon(icon_name, 16), text::body(label)]
++                        .align_y(Alignment::Center)
++                        .spacing(space_s),
++                )
++                .on_press(Message::Action(action))
++            };
++            let content = column![
++                item("system-suspend-symbolic", "Sleep", PowerAction::Suspend),
++                item("system-reboot-symbolic", "Restart", PowerAction::Restart),
++                item("system-shutdown-symbolic", "Power off", PowerAction::Shutdown),
++            ]
++            .padding([8, 0]);
++            return self
++                .core
++                .applet
++                .popup_container(content)
++                .limits(iced::Limits::NONE.min_width(1.0).min_height(1.0).max_width(240.0))
++                .into();
++        }
++
+         if matches!(self.popup, Some(p) if p == id) {
+-            let settings = menu_button(text::body(fl!("settings"))).on_press(Message::OpenSettings);
++            let settings = widget::mouse_area(
++                menu_button(
++                    row![
++                        text_icon("preferences-system-symbolic", 24),
++                        text::body("Settings"),
++                        space::horizontal().width(Length::Fill),
++                        shortcut_label(&["win", "I"]),
++                    ]
++                    .align_y(Alignment::Center)
++                    .spacing(space_xxs),
++                )
++                .on_press(Message::OpenSettings),
++            )
++            .on_enter(Message::ClosePowerSubmenu);
+ 
+             let session = column![
+                 menu_button(
+@@ -233,43 +357,83 @@ impl cosmic::Application for Power {
+                         text_icon("system-lock-screen-symbolic", 24),
+                         text::body(fl!("lock-screen")),
+                         space::horizontal().width(Length::Fill),
+-                        text::body(fl!("lock-screen-shortcut")),
++                        shortcut_label(&["win", "L"]),
+                     ]
+                     .align_y(Alignment::Center)
+                     .spacing(space_xxs)
+                 )
+-                .on_press(Message::Action(PowerAction::Lock)),
++                .on_press(Message::Action(PowerAction::Lock))
++                .apply(widget::mouse_area)
++                .on_enter(Message::ClosePowerSubmenu),
+                 menu_button(
+                     row![
+                         text_icon("system-log-out-symbolic", 24),
+                         text::body(fl!("log-out")),
+                         space::horizontal().width(Length::Fill),
+-                        text::body(fl!("log-out-shortcut")),
++                        shortcut_label(&["win", "shift", "L"]),
+                     ]
+                     .align_y(Alignment::Center)
+                     .spacing(space_xxs)
+                 )
+-                .on_press(Message::Action(PowerAction::LogOut)),
++                .on_press(Message::Action(PowerAction::LogOut))
++                .apply(widget::mouse_area)
++                .on_enter(Message::ClosePowerSubmenu),
+             ];
+ 
+-            let power = row![
+-                power_buttons(
+-                    "system-suspend-symbolic",
+-                    Message::Action(PowerAction::Suspend)
+-                ),
+-                power_buttons(
+-                    "system-reboot-symbolic",
+-                    Message::Action(PowerAction::Restart)
+-                ),
+-                power_buttons(
+-                    "system-shutdown-symbolic",
+-                    Message::Action(PowerAction::Shutdown)
++            // Windows-style "Power >" entry; the actions live in a submenu.
++            let power_item = widget::mouse_area(
++                menu_button(
++                    row![
++                        text_icon("system-shutdown-symbolic", 24),
++                        text::body(fl!("power")),
++                        space::horizontal().width(Length::Fill),
++                        text_icon("go-next-symbolic", 16),
++                    ]
++                    .align_y(Alignment::Center)
++                    .spacing(space_xxs),
++                )
++                .on_press(Message::OpenPowerSubmenu),
++            )
++            .on_enter(Message::OpenPowerSubmenu);
++            let power: Element<'_, Message> = match self.rectangle_tracker.as_ref() {
++                Some(tracker) => tracker.container(0, power_item).into(),
++                None => power_item.into(),
++            };
++
++            let all_apps = widget::mouse_area(
++                menu_button(
++                    row![
++                        text_icon("view-app-grid-symbolic", 24),
++                        text::body("All apps"),
++                        space::horizontal().width(Length::Fill),
++                        shortcut_label(&["win", "A"]),
++                    ]
++                    .align_y(Alignment::Center)
++                    .spacing(space_xxs),
++                )
++                .on_press(Message::OpenAllApps),
++            )
++            .on_enter(Message::ClosePowerSubmenu);
++
++            let task_view = widget::mouse_area(
++                menu_button(
++                    row![
++                        text_icon("focus-windows-symbolic", 24),
++                        text::body("Task view"),
++                        space::horizontal().width(Length::Fill),
++                        shortcut_label(&["win", "W"]),
++                    ]
++                    .align_y(Alignment::Center)
++                    .spacing(space_xxs),
+                 )
+-            ]
+-            .spacing(space_m)
+-            .padding([0, space_m]);
++                .on_press(Message::OpenTaskView),
++            )
++            .on_enter(Message::ClosePowerSubmenu);
+ 
+             let content = column![
++                all_apps,
++                task_view,
++                padded_control(divider::horizontal::default()).padding([space_xxs, space_s]),
+                 settings,
+                 padded_control(divider::horizontal::default()).padding([space_xxs, space_s]),
+                 session,
+@@ -287,7 +451,10 @@ impl cosmic::Application for Power {
+     }
+ 
+     fn subscription(&self) -> Subscription<Message> {
+-        activation_token_subscription(0).map(Message::Token)
++        Subscription::batch([
++            activation_token_subscription(0).map(Message::Token),
++            rectangle_tracker_subscription(0).map(|u| Message::Rectangle(u.1)),
++        ])
+     }
+ 
+     fn style(&self) -> Option<iced::theme::Style> {
+@@ -295,6 +462,56 @@ impl cosmic::Application for Power {
+     }
+ }
+ 
++const SHIFT_SVG: &[u8] = br#"<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 16 16"><path d="M8 1.5 L14.5 8.5 H10.75 V14.5 H5.25 V8.5 H1.5 Z" fill="none" stroke="black" stroke-width="1.6" stroke-linejoin="round"/></svg>"#;
++
++/// Windows-style shortcut hint, e.g. [win] + Esc. "win" draws a four-pane
++/// logo and "shift" a bold arrow, so they read clearly next to the text.
++fn shortcut_label<'a>(keys: &[&'static str]) -> Element<'a, Message> {
++    fn pane<'a>() -> Element<'a, Message> {
++        widget::container(Space::new().width(Length::Fixed(6.0)).height(Length::Fixed(6.0)))
++            .class(theme::Container::custom(|theme| widget::container::Style {
++                background: Some(iced::Background::Color(
++                    theme.cosmic().background(theme.transparent).on.into(),
++                )),
++                ..Default::default()
++            }))
++            .into()
++    }
++    let mut r = row![].spacing(4).align_y(Alignment::Center);
++    for (i, key) in keys.iter().enumerate() {
++        if i > 0 {
++            r = r.push(text::body("+"));
++        }
++        r = r.push(match *key {
++            "win" => Element::from(
++                column![
++                    row![pane(), pane()].spacing(1),
++                    row![pane(), pane()].spacing(1),
++                ]
++                .spacing(1),
++            ),
++            // Outlined shift arrow, same height as the logo.
++            "shift" => icon::from_svg_bytes(SHIFT_SVG)
++                .symbolic(true)
++                .icon()
++                .size(14)
++                .into(),
++            k => text::body(k).into(),
++        });
++    }
++    r.into()
++}
++
++impl Power {
++    fn close_power_submenu(&mut self) -> app::Task<Message> {
++        match self.power_submenu.take() {
++            Some(id) => destroy_popup(id),
++            None => Task::none(),
++        }
++    }
++}
++
++#[allow(dead_code)]
+ fn power_buttons(name: &str, on_press: Message) -> button::Button<'_, Message> {
+     button::custom(
+         widget::container(text_icon(name, 40))
+diff --git a/cosmic-panel-button/src/lib.rs b/cosmic-panel-button/src/lib.rs
+index 68c55af0..45751e54 100644
+--- a/cosmic-panel-button/src/lib.rs
++++ b/cosmic-panel-button/src/lib.rs
+@@ -35,6 +35,48 @@ struct Button {
+     config: IndividualConfig,
+ }
+ 
++/// Windows-style taskbar search box: started with `search` as the second
++/// argument, the button is drawn as a rounded "Search" field.
++static SEARCH_MODE: LazyLock<bool> =
++    LazyLock::new(|| env::args().nth(2).is_some_and(|a| a == "search"));
++
++fn search_box_style() -> cosmic::theme::Button {
++    fn style(theme: &cosmic::Theme, hovered: bool, pressed: bool) -> cosmic::widget::button::Style {
++        let c = theme.cosmic().background(theme.transparent).component.clone();
++        let bg = if pressed {
++            c.pressed
++        } else if hovered {
++            c.hover
++        } else {
++            c.base
++        };
++        // Soft divider border that picks up a hint of the accent on hover.
++        let mut border: iced::Color = c.divider.into();
++        if hovered {
++            let mut accent: iced::Color = theme.cosmic().accent_color().into();
++            accent.a = 0.55;
++            border = accent;
++        }
++        let mut on: iced::Color = c.on.into();
++        on.a *= 0.7;
++        let mut s = cosmic::widget::button::Style::new();
++        s.background = Some(iced::Background::Color(bg.into()));
++        // Fully rounded pill.
++        s.border_radius = 999.0.into();
++        s.border_width = 1.0;
++        s.border_color = border;
++        s.text_color = Some(on);
++        s.icon_color = Some(on);
++        s
++    }
++    cosmic::theme::Button::Custom {
++        active: Box::new(|_, t| style(t, false, false)),
++        disabled: Box::new(|t| style(t, false, false)),
++        hovered: Box::new(|_, t| style(t, true, false)),
++        pressed: Box::new(|_, t| style(t, true, true)),
++    }
++}
++
+ #[derive(Debug, Clone)]
+ enum Msg {
+     Press,
+@@ -148,6 +190,76 @@ impl cosmic::Application for Button {
+     }
+ 
+     fn view(&self) -> cosmic::Element<'_, Msg> {
++        if *SEARCH_MODE && self.core.applet.is_horizontal() {
++            let suggested = self.core.applet.suggested_size(true);
++            let (_, minor_pad) = self.core.applet.suggested_padding(true);
++            let outer_h = f32::from(suggested.1 + 2 * minor_pad);
++            // Scale with the panel size; tuned for the M (28px icon) size.
++            let k = f32::from(suggested.1) / 28.0;
++            let px = |v: f32| (v * k).round();
++            let pill = cosmic::widget::button::custom(
++                cosmic::widget::container(
++                    row!(
++                        cosmic::widget::icon::from_name("system-search-symbolic")
++                            .size(px(20.0) as u16)
++                            .icon()
++                            .class(cosmic::theme::Svg::Custom(std::rc::Rc::new(|theme| {
++                                let mut c: iced::Color = theme
++                                    .cosmic()
++                                    .background(theme.transparent)
++                                    .component
++                                    .on
++                                    .into();
++                                c.a *= 0.7;
++                                cosmic::iced::widget::svg::Style { color: Some(c) }
++                            }))),
++                        // Dimmed like an input placeholder. The invisible longer
++                        // text keeps the box at a comfortable width.
++                        cosmic::iced::widget::stack![
++                            cosmic::widget::text::body("Search anything...").size(px(14.0)).class(
++                                cosmic::theme::Text::Custom(|_| {
++                                    cosmic::iced::widget::text::Style {
++                                        color: Some(iced::Color::TRANSPARENT),
++                                        ..Default::default()
++                                    }
++                                })
++                            ),
++                            cosmic::widget::text::body("Search...").size(px(16.0)).class(
++                                cosmic::theme::Text::Custom(|theme| {
++                                    let mut c: iced::Color = theme
++                                        .cosmic()
++                                        .background(theme.transparent)
++                                        .component
++                                        .on
++                                        .into();
++                                    c.a *= 0.7;
++                                    cosmic::iced::widget::text::Style {
++                                        color: Some(c),
++                                        ..Default::default()
++                                    }
++                                })
++                            ),
++                        ],
++                    )
++                    .spacing(px(8.0))
++                    .align_y(iced::Alignment::Center),
++                )
++                .center_y(Length::Fill),
++            )
++            .padding([0.0, px(22.0), 0.0, px(14.0)])
++            .width(Length::Shrink)
++            .height(Length::Fixed((outer_h - px(12.0)).max(20.0)))
++            .class(search_box_style())
++            .on_press_down(Msg::Press);
++            return autosize::autosize(
++                cosmic::widget::container(pill)
++                    .padding([0, 6])
++                    .height(Length::Fixed(outer_h))
++                    .center_y(Length::Fixed(outer_h)),
++                AUTOSIZE_MAIN_ID.clone(),
++            )
++            .into();
++        }
+         // currently, panel being anchored to the left or right is a hard
+         // override for icon, later if text is updated to wrap, we may
+         // use Override::Text to override this behavior

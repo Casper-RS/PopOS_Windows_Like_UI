@@ -1,0 +1,14 @@
+[Desktop Entry]
+Type=Application
+Terminal=false
+NoDisplay=true
+Categories=COSMIC;
+X-CosmicApplet=true
+Name=Keyboard Layout (Windows-like)
+Comment=Two-line keyboard layout indicator
+Exec=wlui-keyboard
+Icon=com.system76.CosmicAppletInputSources-symbolic
+X-CosmicShrinkable=true
+X-CosmicHoverPopup=Auto
+X-HostWaylandDisplay=true
+X-OverflowPriority=10

@@ -1,0 +1,7 @@
+#!/bin/sh
+# Run the COSMIC program this link is named after on the host, keeping the
+# activation token so the new window gets focus.
+exec flatpak-spawn --host \
+    ${XDG_ACTIVATION_TOKEN:+"--env=XDG_ACTIVATION_TOKEN=$XDG_ACTIVATION_TOKEN"} \
+    ${DESKTOP_STARTUP_ID:+"--env=DESKTOP_STARTUP_ID=$DESKTOP_STARTUP_ID"} \
+    "$(basename "$0")" "$@"

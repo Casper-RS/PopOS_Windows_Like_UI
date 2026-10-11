@@ -1,0 +1,13 @@
+[Desktop Entry]
+Type=Application
+Terminal=false
+NoDisplay=true
+Categories=COSMIC;
+X-CosmicApplet=true
+Name=Start (Windows-like)
+Comment=Start menu: all apps, task view, settings, lock, log out and power
+Exec=wlui-start
+Icon=distributor-logo-pop-os
+X-CosmicShrinkable=true
+X-CosmicHoverPopup=Auto
+X-OverflowPriority=10

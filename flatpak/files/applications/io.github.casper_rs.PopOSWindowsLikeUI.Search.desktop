@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+Terminal=false
+NoDisplay=true
+Categories=COSMIC;
+X-CosmicApplet=true
+Name=Search Box (Windows-like)
+Comment=Search box that opens the launcher
+Exec=wlui-search
+Icon=system-search-symbolic
+X-OverflowPriority=10

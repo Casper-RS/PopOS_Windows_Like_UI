@@ -1,0 +1,110 @@
+# Windows-like taskbar for the COSMIC desktop: six panel applets in one Flatpak.
+id: io.github.casper_rs.PopOSWindowsLikeUI
+runtime: org.freedesktop.Platform
+runtime-version: '25.08'
+sdk: org.freedesktop.Sdk
+sdk-extensions:
+  - org.freedesktop.Sdk.Extension.rust-stable
+command: wlui-taskbar
+finish-args:
+  - --share=ipc
+  - --socket=wayland
+  - --socket=fallback-x11
+  - --device=all
+  # Tray items (StatusNotifierItem), COSMIC settings daemon, flatpak-spawn
+  - --socket=session-bus
+  # Sleep/restart/power off, and GPU selection when launching apps
+  - --system-talk-name=org.freedesktop.login1
+  - --system-talk-name=net.hadess.SwitcherooControl
+  # Panel, theme, keyboard layout and pinned-app configuration
+  - --filesystem=xdg-config/cosmic
+  # Installed apps and their icons
+  - --filesystem=host-os:ro
+  - --filesystem=xdg-data/applications:ro
+  - --filesystem=xdg-data/icons:ro
+  - --filesystem=~/.icons:ro
+  - --filesystem=~/.local/share/flatpak/exports/share:ro
+  - --filesystem=/var/lib/flatpak/exports/share:ro
+  - --filesystem=~/.local/share/flatpak/app:ro
+  - --filesystem=/var/lib/flatpak/app:ro
+  - --filesystem=/opt:ro
+  - --filesystem=/snap:ro
+  - --filesystem=/var/lib/snapd/snap:ro
+  - --filesystem=/var/lib/snapd/desktop:ro
+  # System monitor sensors
+  - --filesystem=/sys/class/hwmon:ro
+  - --filesystem=/sys/class/drm:ro
+  - --filesystem=/sys/devices:ro
+build-options:
+  append-path: /usr/lib/sdk/rust-stable/bin
+  # Cargo fetches crates during the build.
+  build-args:
+    - --share=network
+modules:
+  - name: cosmic-applets
+    buildsystem: simple
+    build-options:
+      env:
+        CARGO_HOME: /run/build/cosmic-applets/cargo
+    sources:
+      - type: git
+        url: https://github.com/pop-os/cosmic-applets.git
+        commit: 406d1b7d627138fdf4078f654268d3d8774e50f1
+      - type: patch
+        path: patches/cosmic-applets-windows-like.patch
+    build-commands:
+      # cosmic-comp-config links libinput without using it; the SDK lacks it.
+      - mkdir -p stub && cc -shared -o stub/libinput.so -x c /dev/null
+      - RUSTFLAGS="-L $PWD/stub" cargo build --release --locked -p cosmic-app-list -p cosmic-applet-input-sources
+        -p cosmic-applet-power -p cosmic-panel-button
+      - install -Dm755 target/release/cosmic-app-list /app/libexec/wlui/cosmic-app-list
+      - install -Dm755 target/release/cosmic-applet-input-sources /app/libexec/wlui/cosmic-applet-input-sources
+      - install -Dm755 target/release/cosmic-applet-power /app/libexec/wlui/cosmic-applet-power
+      - install -Dm755 target/release/cosmic-panel-button /app/libexec/wlui/cosmic-panel-button
+
+  - name: status-hub
+    buildsystem: simple
+    build-options:
+      env:
+        CARGO_HOME: /run/build/status-hub/cargo
+    sources:
+      - type: git
+        url: https://github.com/marcelogomes90/cosmic-ext-applet-status-hub.git
+        commit: d09f89256c254310a660d84780bba9b8a75b23be
+    build-commands:
+      - cargo build --release --locked
+      - install -Dm755 target/release/cosmic-ext-applet-status-hub /app/libexec/wlui/cosmic-ext-applet-status-hub
+      - install -Dm644 resources/io.github.marcelogomes90.cosmic-ext-applet-status-hub-symbolic.svg
+        /app/share/icons/hicolor/scalable/apps/io.github.marcelogomes90.cosmic-ext-applet-status-hub-symbolic.svg
+
+  - name: system-monitor
+    buildsystem: simple
+    build-options:
+      env:
+        CARGO_HOME: /run/build/system-monitor/cargo
+    sources:
+      - type: git
+        url: https://github.com/Casper-RS/PopOS_Cosmic-DE_System_Analysis.git
+        commit: 90f8751e24e67908719016f1766278c3912054d0
+    build-commands:
+      - cargo build --release --locked
+      - install -Dm755 target/release/cosmic-ext-applet-system-monitor /app/libexec/wlui/cosmic-ext-applet-system-monitor
+      - install -Dm644 res/dev.DBrox.CosmicSystemMonitor.svg /app/share/icons/hicolor/scalable/apps/dev.DBrox.CosmicSystemMonitor.svg
+
+  - name: windows-like-ui
+    buildsystem: simple
+    sources:
+      - type: dir
+        path: files
+    build-commands:
+      - install -Dm755 -t /app/bin bin/*
+      # Programs the applets start on the host.
+      - install -Dm755 host-shims/host-run /app/libexec/wlui-host/host-run
+      - for c in cosmic-osd cosmic-settings cosmic-app-library cosmic-workspaces cosmic-launcher cosmic-term; do
+        ln -s host-run /app/libexec/wlui-host/$c; done
+      - install -Dm644 -t /app/share/applications applications/*.desktop
+      # Host apps and icons, without the host's theme defaults (see wlui-env).
+      - mkdir -p /app/share/host /app/share/host-local
+      - for d in applications icons pixmaps; do ln -s /run/host/usr/share/$d /app/share/host/$d;
+        ln -s /run/host/usr/local/share/$d /app/share/host-local/$d; done
+      - install -Dm644 io.github.casper_rs.PopOSWindowsLikeUI.metainfo.xml /app/share/metainfo/io.github.casper_rs.PopOSWindowsLikeUI.metainfo.xml

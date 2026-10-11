@@ -1,0 +1,14 @@
+[Desktop Entry]
+Type=Application
+Terminal=false
+NoDisplay=true
+Categories=COSMIC;
+X-CosmicApplet=true
+Name=Taskbar (Windows-like)
+Comment=Pinned and running apps with window previews on hover
+Exec=wlui-taskbar
+Icon=com.system76.CosmicAppList
+X-MinimizeApplet=5
+X-OverflowPriority=100
+X-OverflowMinSize=4
+X-HostWaylandDisplay=true

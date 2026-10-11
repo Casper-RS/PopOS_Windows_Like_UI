@@ -1,0 +1,3 @@
+#!/bin/sh
+. /app/bin/wlui-env
+exec /app/libexec/wlui/cosmic-app-list "$@"

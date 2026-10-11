@@ -1,0 +1,3 @@
+#!/bin/sh
+. /app/bin/wlui-env
+exec /app/libexec/wlui/cosmic-ext-applet-status-hub "$@"

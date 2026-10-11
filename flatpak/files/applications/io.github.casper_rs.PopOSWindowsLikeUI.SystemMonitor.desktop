@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+Terminal=false
+NoDisplay=true
+Categories=COSMIC;
+X-CosmicApplet=true
+Name=System Monitor
+Comment=CPU, memory, network and GPU usage
+Exec=wlui-sysmon
+Icon=dev.DBrox.CosmicSystemMonitor
+X-CosmicHoverPopup=Auto
