@@ -117,6 +117,30 @@ add_shortcut() {
 add_shortcut '(modifiers: [Super], key: "i"): Spawn("cosmic-settings"),'
 add_shortcut '(modifiers: [Super], key: "l"): System(LockScreen),'
 add_shortcut '(modifiers: [Super, Shift], key: "l"): System(LogOut),'
+add_shortcut "(modifiers: [Super], key: \"v\"): Spawn(\"gdbus call --session --dest $APP.Clipboard \
+--object-path /$(echo "$APP.Clipboard" | tr . /) --method org.freedesktop.DbusActivation.ActivateAction show [] {}\"),"
+
+# Clipboard history runs from login, so it sees everything copied.
+# COSMIC 1.10 hides layer-shell, data-control and virtual-keyboard from Flatpak's
+# sandboxed Wayland socket, so the launcher hands it the real compositor socket.
+LAUNCHER="$HOME/.local/share/windows-like-ui/clipboard-start"
+mkdir -p "$(dirname "$LAUNCHER")"
+cat > "$LAUNCHER" <<LAUNCHER
+#!/bin/sh
+display=\${WAYLAND_DISPLAY:-wayland-0}
+exec flatpak run --nosocket=wayland --filesystem="xdg-run/\$display" --command=sh $APP \\
+    -c "WAYLAND_DISPLAY=\$display exec wlui-clipboard"
+LAUNCHER
+chmod +x "$LAUNCHER"
+mkdir -p "$HOME/.config/autostart"
+cat > "$HOME/.config/autostart/$APP.Clipboard.desktop" <<DESKTOP
+[Desktop Entry]
+Type=Application
+Name=Clipboard history (Windows-like)
+Exec=$LAUNCHER
+X-GNOME-Autostart-enabled=true
+NoDisplay=true
+DESKTOP
 
 echo
 echo "Done. Log out and back in to finish (the notifications icon needs a fresh session)."

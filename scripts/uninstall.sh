@@ -18,5 +18,8 @@ else
     echo "No backup found; leaving the panel configuration as it is." >&2
 fi
 
+rm -f "$HOME/.config/autostart/$APP.Clipboard.desktop"
+rm -rf "$HOME/.local/share/windows-like-ui"
+flatpak kill "$APP" 2>/dev/null || true
 flatpak uninstall --user -y --noninteractive "$APP" || true
 echo "Done. Log out and back in to finish."

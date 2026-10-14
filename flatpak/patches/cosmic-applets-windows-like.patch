@@ -1,3 +1,42 @@
+diff --git a/Cargo.lock b/Cargo.lock
+index 08f54d35..43c8b0cd 100644
+--- a/Cargo.lock
++++ b/Cargo.lock
+@@ -7918,6 +7918,22 @@ version = "0.57.1"
+ source = "registry+https://github.com/rust-lang/crates.io-index"
+ checksum = "1ebf944e87a7c253233ad6766e082e3cd714b5d03812acc24c318f549614536e"
+ 
++[[package]]
++name = "wlui-clipboard"
++version = "0.1.0"
++dependencies = [
++ "calloop",
++ "calloop-wayland-source",
++ "image",
++ "libcosmic",
++ "tokio",
++ "tracing",
++ "tracing-subscriber",
++ "wayland-client",
++ "wayland-protocols",
++ "wayland-protocols-misc",
++]
++
+ [[package]]
+ name = "write16"
+ version = "1.0.0"
+diff --git a/Cargo.toml b/Cargo.toml
+index 77d96a98..8c460f07 100644
+--- a/Cargo.toml
++++ b/Cargo.toml
+@@ -20,6 +20,7 @@ members = [
+     "cosmic-applet-input-sources",
+     "cosmic-applet-a11y",
+     "cosmic-applets-config",
++    "wlui-clipboard",
+ ]
+ 
+ resolver = "3"
 diff --git a/cosmic-app-list/src/app.rs b/cosmic-app-list/src/app.rs
 index 3e5a3a6d..92e84253 100755
 --- a/cosmic-app-list/src/app.rs
@@ -2519,3 +2558,1049 @@ index 00000000..c12ac070
 +        widget::container(self).padding(padding).into()
 +    }
 +}
+diff --git a/wlui-clipboard/Cargo.toml b/wlui-clipboard/Cargo.toml
+new file mode 100644
+index 00000000..73f7aab5
+--- /dev/null
++++ b/wlui-clipboard/Cargo.toml
+@@ -0,0 +1,19 @@
++[package]
++name = "wlui-clipboard"
++version = "0.1.0"
++edition = "2024"
++license = "GPL-3.0-only"
++
++# Windows-style clipboard history (Super+V) for the Windows-like UI.
++
++[dependencies]
++calloop = "0.14"
++calloop-wayland-source = "0.4"
++image = { version = "0.25", default-features = false, features = ["png"] }
++libcosmic = { workspace = true, features = ["single-instance"] }
++tracing.workspace = true
++tracing-subscriber.workspace = true
++tokio.workspace = true
++wayland-client = "0.31"
++wayland-protocols = { version = "0.32", features = ["client", "staging"] }
++wayland-protocols-misc = { version = "0.3", features = ["client"] }
+diff --git a/wlui-clipboard/src/main.rs b/wlui-clipboard/src/main.rs
+new file mode 100644
+index 00000000..ca3c2b96
+--- /dev/null
++++ b/wlui-clipboard/src/main.rs
+@@ -0,0 +1,507 @@
++// SPDX-License-Identifier: GPL-3.0-only
++
++//! Windows-style clipboard history. Runs in the background from login and
++//! records what is copied; `wlui-clipboard show` (Super+V) opens the list
++//! above the taskbar, and picking an item pastes it into the focused window.
++
++mod store;
++mod wayland;
++
++use cosmic::{
++    Element,
++    app::{Core, CosmicFlags, Settings, Task},
++    dbus_activation,
++    iced::{
++        Alignment, Color, ContentFit, Length, Limits, Subscription, event,
++        keyboard::{self, key::Named},
++        platform_specific::{
++            runtime::wayland::layer_surface::{IcedMargin, IcedOutput, SctkLayerSurfaceSettings},
++            shell::wayland::commands::layer_surface::{
++                Anchor, KeyboardInteractivity, Layer, destroy_layer_surface, get_layer_surface,
++            },
++        },
++        stream, window,
++    },
++    theme,
++    widget::{self, column, icon, image, row, text},
++};
++use std::{
++    sync::atomic::{AtomicU64, Ordering},
++    time::Duration,
++};
++use wayland::{Cmd, CmdSender, Data};
++
++/// Unpinned items kept, like Windows.
++const MAX_ITEMS: usize = 25;
++const PANEL_WIDTH: f32 = 380.0;
++const PANEL_MAX_HEIGHT: f32 = 600.0;
++/// Time for focus to return to the window before Ctrl+V is pressed.
++const PASTE_DELAY: Duration = Duration::from_millis(150);
++
++fn main() -> cosmic::iced::Result {
++    tracing_subscriber::fmt()
++        .with_env_filter(
++            tracing_subscriber::EnvFilter::try_from_default_env()
++                .unwrap_or_else(|_| "warn".into()),
++        )
++        .init();
++    let settings = Settings::default()
++        .no_main_window(true)
++        .exit_on_close(false)
++        .transparent(true);
++    cosmic::app::run_single_instance::<App>(
++        settings,
++        Flags {
++            action: std::env::args().nth(1),
++        },
++    )
++}
++
++#[derive(Clone, Debug, Default)]
++struct Flags {
++    action: Option<String>,
++}
++
++impl CosmicFlags for Flags {
++    type SubCommand = String;
++    type Args = Vec<String>;
++
++    fn action(&self) -> Option<&String> {
++        self.action.as_ref()
++    }
++}
++
++/// One clipboard entry, with what the list shows for it.
++#[derive(Clone)]
++pub struct Item {
++    id: u64,
++    pub data: Data,
++    preview: String,
++    thumb: Option<image::Handle>,
++    pinned: bool,
++}
++
++impl std::fmt::Debug for Item {
++    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
++        write!(f, "Item({})", self.id)
++    }
++}
++
++impl Item {
++    /// None for images that can't be decoded.
++    pub fn new(data: Data) -> Option<Item> {
++        static NEXT_ID: AtomicU64 = AtomicU64::new(1);
++        let (preview, thumb) = match &data {
++            Data::Text(t) => (preview(t), None),
++            Data::Png(png) => {
++                let img = ::image::load_from_memory_with_format(png, ::image::ImageFormat::Png)
++                    .ok()?
++                    .thumbnail(wayland::THUMB_SIZE * 2, wayland::THUMB_SIZE)
++                    .into_rgba8();
++                let (w, h) = img.dimensions();
++                (String::new(), Some(image::Handle::from_rgba(w, h, img.into_raw())))
++            }
++        };
++        Some(Item {
++            id: NEXT_ID.fetch_add(1, Ordering::Relaxed),
++            data,
++            preview,
++            thumb,
++            pinned: false,
++        })
++    }
++}
++
++/// First few lines of the text, shortened.
++fn preview(text: &str) -> String {
++    const LINES: usize = 4;
++    const LINE_CHARS: usize = 90;
++    let mut out = String::new();
++    let mut lines = text.trim().lines();
++    for (n, line) in lines.by_ref().take(LINES).enumerate() {
++        if n > 0 {
++            out.push('\n');
++        }
++        let line = line.replace('\t', "    ");
++        let mut chars = line.chars();
++        out.extend(chars.by_ref().take(LINE_CHARS));
++        if chars.next().is_some() {
++            out.push('…');
++        }
++    }
++    if lines.next().is_some() {
++        out.push_str("\n…");
++    }
++    out
++}
++
++#[derive(Clone, Debug)]
++pub enum Message {
++    Ready(CmdSender),
++    Copied(Item),
++    Toggle,
++    Close,
++    Pick(u64),
++    Paste,
++    Remove(u64),
++    TogglePin(u64),
++    ClearAll,
++    Key(Named),
++    Noop,
++}
++
++struct App {
++    core: Core,
++    cmd: Option<CmdSender>,
++    /// Newest first.
++    items: Vec<Item>,
++    selected: usize,
++    surface: Option<window::Id>,
++}
++
++impl App {
++    fn send(&self, cmd: Cmd) {
++        if let Some(CmdSender(tx)) = &self.cmd {
++            let _ = tx.send(cmd);
++        }
++    }
++
++    fn position(&self, id: u64) -> Option<usize> {
++        self.items.iter().position(|i| i.id == id)
++    }
++
++    fn open(&mut self) -> Task<Message> {
++        if self.surface.is_some() {
++            return Task::none();
++        }
++        let id = window::Id::unique();
++        tracing::debug!("opening {id:?}");
++        self.surface = Some(id);
++        self.selected = 0;
++        // Covers the free area of the active screen (not the panel), so a
++        // click next to the list closes it, as on Windows.
++        get_layer_surface(SctkLayerSurfaceSettings {
++            id,
++            layer: Layer::Overlay,
++            keyboard_interactivity: KeyboardInteractivity::Exclusive,
++            input_zone: None,
++            anchor: Anchor::TOP | Anchor::BOTTOM | Anchor::LEFT | Anchor::RIGHT,
++            output: IcedOutput::Active,
++            namespace: "wlui-clipboard".into(),
++            size: Some((None, None)),
++            margin: IcedMargin {
++                top: 0,
++                bottom: 0,
++                left: 0,
++                right: 0,
++            },
++            exclusive_zone: 0,
++            size_limits: Limits::NONE,
++        })
++    }
++
++    fn close(&mut self) -> Task<Message> {
++        match self.surface.take() {
++            Some(id) => destroy_layer_surface(id),
++            None => Task::none(),
++        }
++    }
++
++    fn pinned_changed(&self) {
++        let pinned: Vec<&Data> = self.items.iter().filter(|i| i.pinned).map(|i| &i.data).collect();
++        store::save_pinned(&pinned);
++    }
++
++    fn panel(&self) -> Element<'_, Message> {
++        let spacing = theme::active().cosmic().spacing;
++
++        let header = row![
++            text::heading("Clipboard"),
++            widget::space::horizontal().width(Length::Fill),
++            widget::button::text("Clear all").on_press_maybe(
++                self.items.iter().any(|i| !i.pinned).then_some(Message::ClearAll)
++            ),
++        ]
++        .align_y(Alignment::Center)
++        .padding([0, 0, 0, spacing.space_xxs]);
++
++        let body: Element<_> = if self.items.is_empty() {
++            column![
++                text::body("Nothing here"),
++                text::caption(
++                    "You'll see your clipboard history here once you've copied something."
++                ),
++            ]
++            .spacing(spacing.space_xxs)
++            .padding([spacing.space_s, spacing.space_xxs])
++            .into()
++        } else {
++            let mut list = column::with_capacity(self.items.len()).spacing(spacing.space_xs);
++            for (n, item) in self.items.iter().enumerate() {
++                list = list.push(card(item, n == self.selected));
++            }
++            widget::scrollable(list.padding([0, spacing.space_s, 0, 0]))
++                .height(Length::Shrink)
++                .into()
++        };
++
++        let panel = widget::container(column![header, body].spacing(spacing.space_s))
++            .padding(spacing.space_s)
++            .width(Length::Fixed(PANEL_WIDTH))
++            .max_height(PANEL_MAX_HEIGHT)
++            .class(theme::Container::custom(|theme| {
++                let cosmic = theme.cosmic();
++                widget::container::Style {
++                    text_color: Some(cosmic.background(false).on.into()),
++                    icon_color: Some(cosmic.background(false).on.into()),
++                    background: Some(Color::from(cosmic.background(false).base).into()),
++                    border: cosmic::iced::Border {
++                        radius: cosmic.corner_radii.radius_m.into(),
++                        width: 1.0,
++                        color: cosmic.background(false).divider.into(),
++                    },
++                    shadow: cosmic::iced::Shadow {
++                        color: Color::from_rgba(0.0, 0.0, 0.0, 0.35),
++                        offset: cosmic::iced::Vector::new(0.0, 4.0),
++                        blur_radius: 16.0,
++                    },
++                    ..Default::default()
++                }
++            }));
++
++        // Clicks on the panel stay there; clicks next to it close it.
++        let panel = widget::mouse_area(panel).on_press(Message::Noop);
++        widget::mouse_area(
++            widget::container(panel)
++                .width(Length::Fill)
++                .height(Length::Fill)
++                .align_x(Alignment::End)
++                .align_y(Alignment::End)
++                .padding(spacing.space_s),
++        )
++        .on_press(Message::Close)
++        .into()
++    }
++}
++
++impl cosmic::Application for App {
++    type Executor = cosmic::executor::Default;
++    type Flags = Flags;
++    type Message = Message;
++    const APP_ID: &'static str = "io.github.casper_rs.PopOSWindowsLikeUI.Clipboard";
++
++    fn core(&self) -> &Core {
++        &self.core
++    }
++
++    fn core_mut(&mut self) -> &mut Core {
++        &mut self.core
++    }
++
++    fn init(core: Core, flags: Flags) -> (Self, Task<Message>) {
++        let items = store::load_pinned()
++            .into_iter()
++            .filter_map(|data| {
++                let mut item = Item::new(data)?;
++                item.pinned = true;
++                Some(item)
++            })
++            .collect();
++        let mut app = App {
++            core,
++            cmd: None,
++            items,
++            selected: 0,
++            surface: None,
++        };
++        let task = match flags.action.as_deref() {
++            Some("show") => app.open(),
++            _ => Task::none(),
++        };
++        (app, task)
++    }
++
++    fn dbus_activation(&mut self, msg: dbus_activation::Message) -> Task<Message> {
++        tracing::debug!("activation: {:?}", msg.msg);
++        match msg.msg {
++            dbus_activation::Details::ActivateAction { action, .. } if action == "show" => {
++                self.update(Message::Toggle)
++            }
++            _ => Task::none(),
++        }
++    }
++
++    fn update(&mut self, message: Message) -> Task<Message> {
++        match message {
++            Message::Ready(cmd) => self.cmd = Some(cmd),
++            Message::Copied(mut item) => {
++                if let Some(n) = self.items.iter().position(|i| i.data.same_as(&item.data)) {
++                    item.pinned = self.items.remove(n).pinned;
++                }
++                self.items.insert(0, item);
++                // Drop the oldest unpinned items beyond the limit.
++                let mut unpinned = 0;
++                self.items.retain(|i| {
++                    unpinned += usize::from(!i.pinned);
++                    i.pinned || unpinned <= MAX_ITEMS
++                });
++                self.selected = 0;
++            }
++            Message::Toggle => {
++                return if self.surface.is_some() {
++                    self.close()
++                } else {
++                    self.open()
++                };
++            }
++            Message::Close => return self.close(),
++            Message::Pick(id) => {
++                let Some(n) = self.position(id) else {
++                    return Task::none();
++                };
++                self.send(Cmd::Set(self.items[n].data.clone()));
++                return self.close().chain(Task::perform(
++                    tokio::time::sleep(PASTE_DELAY),
++                    |()| cosmic::Action::App(Message::Paste),
++                ));
++            }
++            Message::Paste => self.send(Cmd::Paste),
++            Message::Remove(id) => {
++                if let Some(n) = self.position(id) {
++                    let item = self.items.remove(n);
++                    if item.pinned {
++                        self.pinned_changed();
++                    }
++                    self.selected = self.selected.min(self.items.len().saturating_sub(1));
++                }
++            }
++            Message::TogglePin(id) => {
++                if let Some(n) = self.position(id) {
++                    self.items[n].pinned ^= true;
++                    self.pinned_changed();
++                }
++            }
++            Message::ClearAll => {
++                self.items.retain(|i| i.pinned);
++                self.selected = 0;
++            }
++            Message::Key(key) if self.surface.is_some() => {
++                let last = self.items.len().saturating_sub(1);
++                match key {
++                    Named::Escape => return self.close(),
++                    Named::ArrowDown => self.selected = (self.selected + 1).min(last),
++                    Named::ArrowUp => self.selected = self.selected.saturating_sub(1),
++                    Named::Home => self.selected = 0,
++                    Named::End => self.selected = last,
++                    Named::Enter => {
++                        if let Some(item) = self.items.get(self.selected) {
++                            return self.update(Message::Pick(item.id));
++                        }
++                    }
++                    Named::Delete => {
++                        if let Some(item) = self.items.get(self.selected) {
++                            return self.update(Message::Remove(item.id));
++                        }
++                    }
++                    _ => {}
++                }
++            }
++            Message::Key(_) | Message::Noop => {}
++        }
++        Task::none()
++    }
++
++    fn view(&self) -> Element<'_, Message> {
++        widget::Space::new().into()
++    }
++
++    fn view_window(&self, _id: window::Id) -> Element<'_, Message> {
++        self.panel()
++    }
++
++    fn subscription(&self) -> Subscription<Message> {
++        struct WaylandSubscription;
++        Subscription::batch([
++            Subscription::run_with(std::any::TypeId::of::<WaylandSubscription>(), |_| {
++                stream::channel(16, |output| async move {
++                    let _ = tokio::task::spawn_blocking(move || wayland::run(output)).await;
++                    // Keep the subscription alive (and don't restart it).
++                    std::future::pending::<()>().await;
++                })
++            }),
++            event::listen_with(|event, _, _| match event {
++                event::Event::Keyboard(keyboard::Event::KeyPressed {
++                    key: keyboard::Key::Named(key),
++                    ..
++                }) => Some(Message::Key(key)),
++                _ => None,
++            }),
++        ])
++    }
++
++    fn style(&self) -> Option<cosmic::iced::theme::Style> {
++        Some(cosmic::applet::style())
++    }
++}
++
++/// An entry in the list: the text or picture, with pin and delete buttons.
++fn card(item: &Item, selected: bool) -> Element<'_, Message> {
++    let spacing = theme::active().cosmic().spacing;
++    let content: Element<_> = match &item.thumb {
++        Some(handle) => image(handle.clone())
++            .content_fit(ContentFit::ScaleDown)
++            .width(Length::Fill)
++            .height(Length::Shrink)
++            .into(),
++        None => text::body(&item.preview).width(Length::Fill).into(),
++    };
++    let pin = widget::button::icon(icon::from_name(if item.pinned {
++        "view-pin-symbolic"
++    } else {
++        "pin-symbolic"
++    }))
++    .extra_small()
++    .selected(item.pinned)
++    .tooltip(if item.pinned { "Unpin" } else { "Pin" })
++    .on_press(Message::TogglePin(item.id));
++    let delete = widget::button::icon(icon::from_name("edit-delete-symbolic"))
++        .extra_small()
++        .tooltip("Delete")
++        .on_press(Message::Remove(item.id));
++
++    widget::button::custom(
++        row![content, column![pin, delete].spacing(spacing.space_xxxs)]
++            .spacing(spacing.space_xs)
++            .align_y(Alignment::Start),
++    )
++    .padding([spacing.space_xs, spacing.space_xs, spacing.space_xs, spacing.space_s])
++    .width(Length::Fill)
++    .class(card_class(selected))
++    .on_press(Message::Pick(item.id))
++    .into()
++}
++
++fn card_class(selected: bool) -> theme::Button {
++    let style = move |theme: &cosmic::Theme, hovered: bool| {
++        let cosmic = theme.cosmic();
++        let component = &cosmic.primary(false).component;
++        let mut s = widget::button::Style::new();
++        s.background = Some(
++            Color::from(if hovered { component.hover } else { component.base }).into(),
++        );
++        s.border_radius = cosmic.corner_radii.radius_s.into();
++        if selected {
++            s.border_width = 2.0;
++            s.border_color = cosmic.accent_color().into();
++        }
++        s.text_color = Some(component.on.into());
++        s.icon_color = s.text_color;
++        s
++    };
++    theme::Button::Custom {
++        active: Box::new(move |_, t| style(t, false)),
++        disabled: Box::new(move |t| style(t, false)),
++        hovered: Box::new(move |_, t| style(t, true)),
++        pressed: Box::new(move |_, t| style(t, true)),
++    }
++}
+diff --git a/wlui-clipboard/src/store.rs b/wlui-clipboard/src/store.rs
+new file mode 100644
+index 00000000..dac8bc17
+--- /dev/null
++++ b/wlui-clipboard/src/store.rs
+@@ -0,0 +1,54 @@
++// SPDX-License-Identifier: GPL-3.0-only
++
++//! Pinned items are kept on disk; the rest of the history is cleared on
++//! logout, as on Windows.
++
++use crate::wayland::Data;
++use std::{fs, path::PathBuf};
++
++fn dir() -> Option<PathBuf> {
++    let base = std::env::var_os("XDG_STATE_HOME")
++        .map(PathBuf::from)
++        .or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".local/state")))?;
++    Some(base.join("windows-like-ui/clipboard-pinned"))
++}
++
++/// Pinned items in list order.
++pub fn load_pinned() -> Vec<Data> {
++    let Some(entries) = dir().and_then(|d| fs::read_dir(d).ok()) else {
++        return Vec::new();
++    };
++    let mut paths: Vec<PathBuf> = entries.flatten().map(|e| e.path()).collect();
++    paths.sort();
++    paths
++        .into_iter()
++        .filter_map(|path| {
++            let bytes = fs::read(&path).ok()?;
++            match path.extension()?.to_str()? {
++                "txt" => Some(Data::Text(String::from_utf8(bytes).ok()?.into())),
++                "png" => Some(Data::Png(bytes.into())),
++                _ => None,
++            }
++        })
++        .collect()
++}
++
++/// Replace the stored items with these.
++pub fn save_pinned(items: &[&Data]) {
++    let Some(dir) = dir() else {
++        return;
++    };
++    if let Ok(entries) = fs::read_dir(&dir) {
++        for entry in entries.flatten() {
++            let _ = fs::remove_file(entry.path());
++        }
++    }
++    let _ = fs::create_dir_all(&dir);
++    for (n, data) in items.iter().enumerate() {
++        let (ext, bytes): (_, &[u8]) = match data {
++            Data::Text(t) => ("txt", t.as_bytes()),
++            Data::Png(p) => ("png", p),
++        };
++        let _ = fs::write(dir.join(format!("{n:03}.{ext}")), bytes);
++    }
++}
+diff --git a/wlui-clipboard/src/wayland.rs b/wlui-clipboard/src/wayland.rs
+new file mode 100644
+index 00000000..69302757
+--- /dev/null
++++ b/wlui-clipboard/src/wayland.rs
+@@ -0,0 +1,442 @@
++// SPDX-License-Identifier: GPL-3.0-only
++
++//! Clipboard access through ext-data-control (watch and set the selection)
++//! and zwp-virtual-keyboard (press Ctrl+V after an item is picked). Runs on
++//! its own Wayland connection and thread; talks to the UI through channels.
++
++use calloop::{EventLoop, channel};
++use calloop_wayland_source::WaylandSource;
++use cosmic::iced::futures::{self, SinkExt};
++use std::{
++    collections::HashMap,
++    io::{Read, Write},
++    os::fd::{AsFd, OwnedFd},
++    sync::Arc,
++    time::Instant,
++};
++use wayland_client::{
++    Connection, Dispatch, Proxy, QueueHandle, WEnum, backend::ObjectId, delegate_noop,
++    event_created_child,
++    protocol::{wl_keyboard, wl_registry, wl_seat},
++};
++use wayland_protocols::ext::data_control::v1::client::{
++    ext_data_control_device_v1::{self, ExtDataControlDeviceV1},
++    ext_data_control_manager_v1::ExtDataControlManagerV1,
++    ext_data_control_offer_v1::{self, ExtDataControlOfferV1},
++    ext_data_control_source_v1::{self, ExtDataControlSourceV1},
++};
++use wayland_protocols_misc::zwp_virtual_keyboard_v1::client::{
++    zwp_virtual_keyboard_manager_v1::ZwpVirtualKeyboardManagerV1,
++    zwp_virtual_keyboard_v1::ZwpVirtualKeyboardV1,
++};
++
++use crate::Message;
++
++/// Offered with every selection we set, so we can tell it apart from
++/// selections made by other apps.
++const OWN_MIME: &str = "application/x-wlui-clipboard";
++/// Password managers (KeePassXC, KDE) mark secrets with this; never record them.
++const SECRET_MIME: &str = "x-kde-passwordManagerHint";
++const TEXT_MIMES: [&str; 5] = [
++    "text/plain;charset=utf-8",
++    "UTF8_STRING",
++    "text/plain",
++    "STRING",
++    "TEXT",
++];
++const PNG_MIME: &str = "image/png";
++/// Larger items are not kept (a 4K screenshot is well below this).
++const MAX_BYTES: usize = 32 << 20;
++pub const THUMB_SIZE: u32 = 320;
++
++// Evdev key codes and the Control modifier mask of standard xkb keymaps.
++const KEY_LEFTCTRL: u32 = 29;
++const KEY_V: u32 = 47;
++const CTRL_MASK: u32 = 1 << 2;
++
++#[derive(Clone)]
++pub enum Data {
++    Text(Arc<str>),
++    Png(Arc<[u8]>),
++}
++
++impl Data {
++    pub fn same_as(&self, other: &Data) -> bool {
++        match (self, other) {
++            (Data::Text(a), Data::Text(b)) => a == b,
++            (Data::Png(a), Data::Png(b)) => a == b,
++            _ => false,
++        }
++    }
++}
++
++/// Requests from the UI.
++pub enum Cmd {
++    /// Make this the current clipboard content.
++    Set(Data),
++    /// Press Ctrl+V in the focused window.
++    Paste,
++    /// Another app copied this (read on a worker thread).
++    Remember(Data),
++}
++
++/// Hands the UI a way to send commands to this thread.
++#[derive(Clone)]
++pub struct CmdSender(pub channel::Sender<Cmd>);
++
++impl std::fmt::Debug for CmdSender {
++    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
++        f.write_str("CmdSender")
++    }
++}
++
++pub fn run(msg_tx: futures::channel::mpsc::Sender<Message>) {
++    if let Err(err) = run_inner(msg_tx) {
++        tracing::error!("clipboard: {err}");
++    }
++}
++
++fn run_inner(
++    mut msg_tx: futures::channel::mpsc::Sender<Message>,
++) -> Result<(), Box<dyn std::error::Error>> {
++    let mut event_loop: EventLoop<State> = EventLoop::try_new()?;
++    let conn = Connection::connect_to_env()?;
++    let event_queue = conn.new_event_queue();
++    let qh = event_queue.handle();
++    conn.display().get_registry(&qh, ());
++    WaylandSource::new(conn.clone(), event_queue).insert(event_loop.handle())?;
++
++    let (cmd_tx, cmd_rx) = channel::channel();
++    event_loop
++        .handle()
++        .insert_source(cmd_rx, |event, _, state: &mut State| {
++            if let channel::Event::Msg(cmd) = event {
++                state.handle_cmd(cmd);
++            }
++        })?;
++    futures::executor::block_on(msg_tx.send(Message::Ready(CmdSender(cmd_tx.clone()))))?;
++
++    let mut state = State {
++        conn,
++        qh,
++        msg_tx,
++        cmd_tx,
++        seat: None,
++        manager: None,
++        device: None,
++        offers: HashMap::new(),
++        own_source: None,
++        current: None,
++        vk_manager: None,
++        vk: None,
++        keymap: None,
++        start: Instant::now(),
++    };
++    loop {
++        event_loop.dispatch(None, &mut state)?;
++        state.setup();
++    }
++}
++
++struct State {
++    conn: Connection,
++    qh: QueueHandle<State>,
++    msg_tx: futures::channel::mpsc::Sender<Message>,
++    cmd_tx: channel::Sender<Cmd>,
++    seat: Option<wl_seat::WlSeat>,
++    manager: Option<ExtDataControlManagerV1>,
++    device: Option<ExtDataControlDeviceV1>,
++    /// Mime types announced for each offer.
++    offers: HashMap<ObjectId, Vec<String>>,
++    own_source: Option<ExtDataControlSourceV1>,
++    /// Last thing copied, offered again when the app that copied it quits.
++    current: Option<Data>,
++    vk_manager: Option<ZwpVirtualKeyboardManagerV1>,
++    vk: Option<ZwpVirtualKeyboardV1>,
++    /// The seat's keymap, reused for the virtual keyboard so the layout of
++    /// the focused app does not change.
++    keymap: Option<(OwnedFd, u32)>,
++    start: Instant,
++}
++
++impl State {
++    /// Create the data device once the seat and the manager are known.
++    fn setup(&mut self) {
++        if self.device.is_none()
++            && let (Some(seat), Some(manager)) = (&self.seat, &self.manager)
++        {
++            self.device = Some(manager.get_data_device(seat, &self.qh, ()));
++            let _ = self.conn.flush();
++        }
++    }
++
++    fn handle_cmd(&mut self, cmd: Cmd) {
++        match cmd {
++            Cmd::Set(data) => self.set_selection(data),
++            Cmd::Paste => self.paste(),
++            Cmd::Remember(data) => self.current = Some(data),
++        }
++        let _ = self.conn.flush();
++    }
++
++    fn set_selection(&mut self, data: Data) {
++        let (Some(manager), Some(device)) = (&self.manager, &self.device) else {
++            return;
++        };
++        let source = manager.create_data_source(&self.qh, ());
++        match &data {
++            Data::Text(_) => TEXT_MIMES.iter().for_each(|m| source.offer(m.to_string())),
++            Data::Png(_) => source.offer(PNG_MIME.into()),
++        }
++        source.offer(OWN_MIME.into());
++        device.set_selection(Some(&source));
++        if let Some(old) = self.own_source.replace(source) {
++            old.destroy();
++        }
++        self.current = Some(data);
++    }
++
++    fn paste(&mut self) {
++        if self.vk.is_none()
++            && let (Some(manager), Some(seat), Some((fd, size))) =
++                (&self.vk_manager, &self.seat, &self.keymap)
++        {
++            let vk = manager.create_virtual_keyboard(seat, &self.qh, ());
++            vk.keymap(wl_keyboard::KeymapFormat::XkbV1.into(), fd.as_fd(), *size);
++            self.vk = Some(vk);
++        }
++        let Some(vk) = &self.vk else {
++            tracing::warn!("clipboard: no virtual keyboard, can't paste");
++            return;
++        };
++        let t = self.start.elapsed().as_millis() as u32;
++        vk.key(t, KEY_LEFTCTRL, 1);
++        vk.modifiers(CTRL_MASK, 0, 0, 0);
++        vk.key(t, KEY_V, 1);
++        vk.key(t + 1, KEY_V, 0);
++        vk.key(t + 1, KEY_LEFTCTRL, 0);
++        vk.modifiers(0, 0, 0, 0);
++    }
++
++    /// A new selection from another app: read it on a worker thread.
++    fn selection_changed(&mut self, offer: Option<ExtDataControlOfferV1>) {
++        let Some(offer) = offer else {
++            // The app that owned the clipboard quit; keep its content around,
++            // like Windows does.
++            if let Some(data) = self.current.clone() {
++                self.set_selection(data);
++                let _ = self.conn.flush();
++            }
++            return;
++        };
++        let mimes = self.offers.remove(&offer.id()).unwrap_or_default();
++        tracing::debug!("selection: {mimes:?}");
++        let has = |m: &str| mimes.iter().any(|x| x == m);
++        if has(OWN_MIME) || mimes.iter().any(|m| m.starts_with(SECRET_MIME)) {
++            offer.destroy();
++            return;
++        }
++        let (mime, is_text) = match TEXT_MIMES.iter().find(|m| has(m)) {
++            Some(m) => (*m, true),
++            None if has(PNG_MIME) => (PNG_MIME, false),
++            None => {
++                // Something we can't show (files only, rich formats); it is
++                // no longer what the clipboard holds.
++                self.current = None;
++                offer.destroy();
++                return;
++            }
++        };
++        let Ok((mut reader, writer)) = std::io::pipe() else {
++            offer.destroy();
++            return;
++        };
++        offer.receive(mime.into(), writer.as_fd());
++        drop(writer);
++        let _ = self.conn.flush();
++        offer.destroy();
++
++        let mut msg_tx = self.msg_tx.clone();
++        let cmd_tx = self.cmd_tx.clone();
++        std::thread::spawn(move || {
++            let mut bytes = Vec::new();
++            if (&mut reader)
++                .take(MAX_BYTES as u64 + 1)
++                .read_to_end(&mut bytes)
++                .is_err()
++                || bytes.is_empty()
++                || bytes.len() > MAX_BYTES
++            {
++                return;
++            }
++            let item = if is_text {
++                let text = String::from_utf8_lossy(&bytes);
++                if text.trim().is_empty() {
++                    return;
++                }
++                crate::Item::new(Data::Text(text.into()))
++            } else {
++                crate::Item::new(Data::Png(bytes.into()))
++            };
++            if let Some(item) = item {
++                let _ = cmd_tx.send(Cmd::Remember(item.data.clone()));
++                let _ = futures::executor::block_on(msg_tx.send(Message::Copied(item)));
++            }
++        });
++    }
++}
++
++impl Dispatch<wl_registry::WlRegistry, ()> for State {
++    fn event(
++        state: &mut Self,
++        registry: &wl_registry::WlRegistry,
++        event: wl_registry::Event,
++        _: &(),
++        _: &Connection,
++        qh: &QueueHandle<Self>,
++    ) {
++        let wl_registry::Event::Global {
++            name,
++            interface,
++            version,
++        } = event
++        else {
++            return;
++        };
++        if interface == wl_seat::WlSeat::interface().name && state.seat.is_none() {
++            state.seat = Some(registry.bind(name, version.min(7), qh, ()));
++        } else if interface == ExtDataControlManagerV1::interface().name {
++            state.manager = Some(registry.bind(name, 1, qh, ()));
++        } else if interface == ZwpVirtualKeyboardManagerV1::interface().name {
++            state.vk_manager = Some(registry.bind(name, 1, qh, ()));
++        }
++    }
++}
++
++impl Dispatch<wl_seat::WlSeat, ()> for State {
++    fn event(
++        _: &mut Self,
++        seat: &wl_seat::WlSeat,
++        event: wl_seat::Event,
++        _: &(),
++        _: &Connection,
++        qh: &QueueHandle<Self>,
++    ) {
++        if let wl_seat::Event::Capabilities {
++            capabilities: WEnum::Value(caps),
++        } = event
++            && caps.contains(wl_seat::Capability::Keyboard)
++        {
++            seat.get_keyboard(qh, ());
++        }
++    }
++}
++
++impl Dispatch<wl_keyboard::WlKeyboard, ()> for State {
++    fn event(
++        state: &mut Self,
++        _: &wl_keyboard::WlKeyboard,
++        event: wl_keyboard::Event,
++        _: &(),
++        _: &Connection,
++        _: &QueueHandle<Self>,
++    ) {
++        if let wl_keyboard::Event::Keymap {
++            format: WEnum::Value(wl_keyboard::KeymapFormat::XkbV1),
++            fd,
++            size,
++        } = event
++        {
++            state.keymap = Some((fd, size));
++            // A new layout: the virtual keyboard picks it up when next needed.
++            if let Some(vk) = state.vk.take() {
++                vk.destroy();
++            }
++        }
++    }
++}
++
++impl Dispatch<ExtDataControlDeviceV1, ()> for State {
++    fn event(
++        state: &mut Self,
++        _: &ExtDataControlDeviceV1,
++        event: ext_data_control_device_v1::Event,
++        _: &(),
++        _: &Connection,
++        _: &QueueHandle<Self>,
++    ) {
++        match event {
++            ext_data_control_device_v1::Event::DataOffer { id } => {
++                state.offers.insert(id.id(), Vec::new());
++            }
++            ext_data_control_device_v1::Event::Selection { id } => state.selection_changed(id),
++            ext_data_control_device_v1::Event::PrimarySelection { id: Some(offer) } => {
++                state.offers.remove(&offer.id());
++                offer.destroy();
++            }
++            ext_data_control_device_v1::Event::Finished => {
++                state.device = None;
++            }
++            _ => {}
++        }
++    }
++
++    event_created_child!(State, ExtDataControlDeviceV1, [
++        ext_data_control_device_v1::EVT_DATA_OFFER_OPCODE => (ExtDataControlOfferV1, ()),
++    ]);
++}
++
++impl Dispatch<ExtDataControlOfferV1, ()> for State {
++    fn event(
++        state: &mut Self,
++        offer: &ExtDataControlOfferV1,
++        event: ext_data_control_offer_v1::Event,
++        _: &(),
++        _: &Connection,
++        _: &QueueHandle<Self>,
++    ) {
++        if let ext_data_control_offer_v1::Event::Offer { mime_type } = event
++            && let Some(mimes) = state.offers.get_mut(&offer.id())
++        {
++            mimes.push(mime_type);
++        }
++    }
++}
++
++impl Dispatch<ExtDataControlSourceV1, ()> for State {
++    fn event(
++        state: &mut Self,
++        source: &ExtDataControlSourceV1,
++        event: ext_data_control_source_v1::Event,
++        _: &(),
++        _: &Connection,
++        _: &QueueHandle<Self>,
++    ) {
++        match event {
++            ext_data_control_source_v1::Event::Send { mime_type, fd } => {
++                let bytes = match (&state.current, mime_type.as_str()) {
++                    (Some(Data::Png(png)), PNG_MIME) => png.to_vec(),
++                    (Some(Data::Text(text)), m) if TEXT_MIMES.contains(&m) => {
++                        text.as_bytes().to_vec()
++                    }
++                    _ => return,
++                };
++                // The reader may be slow; never block the event loop on it.
++                std::thread::spawn(move || {
++                    let _ = std::fs::File::from(fd).write_all(&bytes);
++                });
++            }
++            ext_data_control_source_v1::Event::Cancelled => {
++                if state.own_source.as_ref() == Some(source) {
++                    state.own_source = None;
++                }
++                source.destroy();
++            }
++            _ => {}
++        }
++    }
++}
++
++delegate_noop!(State: ExtDataControlManagerV1);
++delegate_noop!(State: ZwpVirtualKeyboardManagerV1);
++delegate_noop!(State: ignore ZwpVirtualKeyboardV1);

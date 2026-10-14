@@ -1,4 +1,5 @@
-# Windows-like taskbar for the COSMIC desktop: six panel applets in one Flatpak.
+# Windows-like taskbar for the COSMIC desktop: six panel applets and a
+# clipboard history in one Flatpak.
 id: io.github.casper_rs.PopOSWindowsLikeUI
 runtime: org.freedesktop.Platform
 runtime-version: '25.08'
@@ -56,11 +57,12 @@ modules:
       # cosmic-comp-config links libinput without using it; the SDK lacks it.
       - mkdir -p stub && cc -shared -o stub/libinput.so -x c /dev/null
       - RUSTFLAGS="-L $PWD/stub" cargo build --release --locked -p cosmic-app-list -p cosmic-applet-input-sources
-        -p cosmic-applet-power -p cosmic-panel-button
+        -p cosmic-applet-power -p cosmic-panel-button -p wlui-clipboard
       - install -Dm755 target/release/cosmic-app-list /app/libexec/wlui/cosmic-app-list
       - install -Dm755 target/release/cosmic-applet-input-sources /app/libexec/wlui/cosmic-applet-input-sources
       - install -Dm755 target/release/cosmic-applet-power /app/libexec/wlui/cosmic-applet-power
       - install -Dm755 target/release/cosmic-panel-button /app/libexec/wlui/cosmic-panel-button
+      - install -Dm755 target/release/wlui-clipboard /app/libexec/wlui/wlui-clipboard
 
   - name: status-hub
     buildsystem: simple
