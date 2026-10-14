@@ -19,6 +19,8 @@ finish-args:
   - --system-talk-name=net.hadess.SwitcherooControl
   # Panel, theme, keyboard layout and pinned-app configuration
   - --filesystem=xdg-config/cosmic
+  # Folder results in the taskbar search
+  - --filesystem=home:ro
   # Installed apps and their icons
   - --filesystem=host-os:ro
   - --filesystem=xdg-data/applications:ro
@@ -102,7 +104,7 @@ modules:
       - install -Dm755 -t /app/bin bin/*
       # Programs the applets start on the host.
       - install -Dm755 host-shims/host-run /app/libexec/wlui-host/host-run
-      - for c in cosmic-osd cosmic-settings cosmic-app-library cosmic-workspaces cosmic-launcher cosmic-term; do
+      - for c in cosmic-osd cosmic-settings cosmic-app-library cosmic-workspaces cosmic-launcher cosmic-term xdg-open; do
         ln -s host-run /app/libexec/wlui-host/$c; done
       - install -Dm644 -t /app/share/applications applications/*.desktop
       # Host apps and icons, without the host's theme defaults (see wlui-env).

@@ -13,7 +13,8 @@ All applets come in one Flatpak.
 - **Keyboard layout** shown in two lines, like `EN` / `US`
 - Clean tray: Status Hub collects app tray icons, plus a system monitor, network, Bluetooth, battery (laptops only), sound, clock and notifications
 - **Clipboard history** on `Super+V`: your last 25 copies (text and screenshots), pin the ones you want to keep
-- Shortcuts: `Super+V` clipboard history, `Super+I` Settings, `Super+L` lock, `Super+Shift+L` log out
+- **Search** finds apps, settings pages and folders, grouped so you can tell them apart; `Ctrl+Super+F` opens it on the monitor you're working on
+- Shortcuts: `Ctrl+Super+F` search, `Super+V` clipboard history, `Super+I` Settings, `Super+L` lock, `Super+Shift+L` log out
 
 ## Screenshots
 
@@ -48,7 +49,7 @@ All applets come in one Flatpak.
 
 - **Pin tiles:** right-click an app in Start (Most used tiles or All apps) or in the searchbar to pin or unpin it.
 - **Switch tile view:** use the dropdown above the tiles to pick Pinned or Most used.
-- **Search:** click the search box and type. Use the arrow keys and Enter to launch, Esc to close.
+- **Search:** click the search box or press `Ctrl+Super+F` and type. Results are grouped into Apps, Settings and Folders; Enter opens the selected one (a settings page opens in COSMIC Settings, a folder in your file manager). Use the arrow keys to move, Esc or a click outside to close.
 - **Clipboard history:** press `Super+V`, then click an item (or use the arrow keys and Enter) to paste it into the window you were in. Pin items to keep them after logging out; Delete removes the selected item. Copies that password managers mark as secret are never recorded, and the rest is kept in memory only.
 
 ## Install

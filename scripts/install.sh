@@ -117,6 +117,8 @@ add_shortcut() {
 add_shortcut '(modifiers: [Super], key: "i"): Spawn("cosmic-settings"),'
 add_shortcut '(modifiers: [Super], key: "l"): System(LockScreen),'
 add_shortcut '(modifiers: [Super, Shift], key: "l"): System(LogOut),'
+add_shortcut "(modifiers: [Ctrl, Super], key: \"f\"): Spawn(\"gdbus emit --session \
+--object-path /$(echo "$APP.Search" | tr . /) --signal $APP.Search.Open\"),"
 add_shortcut "(modifiers: [Super], key: \"v\"): Spawn(\"gdbus call --session --dest $APP.Clipboard \
 --object-path /$(echo "$APP.Clipboard" | tr . /) --method org.freedesktop.DbusActivation.ActivateAction show [] {}\"),"
 

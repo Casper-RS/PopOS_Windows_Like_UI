@@ -9,3 +9,5 @@ Comment=Search box with app results above it
 Exec=wlui-search
 Icon=system-search-symbolic
 X-OverflowPriority=10
+# Privileged Wayland socket: knows which monitor has the focused window for Ctrl+Super+F.
+X-HostWaylandDisplay=true
