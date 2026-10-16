@@ -128,13 +128,18 @@ add_shortcut "(modifiers: [Super], key: \"v\"): Spawn(\"gdbus call --session --d
 # Clipboard history runs from login, so it sees everything copied.
 # COSMIC 1.10 hides layer-shell, data-control and virtual-keyboard from Flatpak's
 # sandboxed Wayland socket, so the launcher hands it the real compositor socket.
+# It goes through a hard link in a private dir: exposing xdg-run/wayland-N itself
+# leaves a stub where the panel applets (same app ID) expect their socket, and
+# Start then crashes with NoCompositor when the clipboard starts first.
 LAUNCHER="$HOME/.local/share/windows-like-ui/clipboard-start"
 mkdir -p "$(dirname "$LAUNCHER")"
 cat > "$LAUNCHER" <<LAUNCHER
 #!/bin/sh
 display=\${WAYLAND_DISPLAY:-wayland-0}
-exec flatpak run --nosocket=wayland --filesystem="xdg-run/\$display" --command=sh $APP \\
-    -c "WAYLAND_DISPLAY=\$display exec wlui-clipboard"
+dir=\$XDG_RUNTIME_DIR/windows-like-ui
+mkdir -p "\$dir" && ln -f "\$XDG_RUNTIME_DIR/\$display" "\$dir/\$display" || exit 1
+exec flatpak run --nosocket=wayland --filesystem=xdg-run/windows-like-ui --command=sh $APP \\
+    -c "WAYLAND_DISPLAY=windows-like-ui/\$display exec wlui-clipboard"
 LAUNCHER
 chmod +x "$LAUNCHER"
 mkdir -p "$HOME/.config/autostart"
