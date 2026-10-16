@@ -166,12 +166,18 @@ else
         cp "$bin" "$dest.new"
     fi
     chmod 755 "$dest.new"
-    mv "$dest.new" "$dest"
-    mkdir -p "$HOME/.local/share/windows-like-ui"
-    touch "$HOME/.local/share/windows-like-ui/lockscreen-installed"
-    # cosmic-session restarts it right away with the new binary.
-    pkill -x -u "$(id -un)" cosmic-greeter || true
-    echo "Installed the lock screen."
+    # Never swap in a binary that can't even start (missing libraries etc.).
+    if "$dest.new" --help >/dev/null 2>&1; then
+        mv "$dest.new" "$dest"
+        mkdir -p "$HOME/.local/share/windows-like-ui"
+        touch "$HOME/.local/share/windows-like-ui/lockscreen-installed"
+        # cosmic-session restarts it right away with the new binary.
+        pkill -x -u "$(id -un)" cosmic-greeter || true
+        echo "Installed the lock screen."
+    else
+        rm -f "$dest.new"
+        echo "The lock screen doesn't run on this system; keeping the stock one." >&2
+    fi
 fi
 
 echo

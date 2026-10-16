@@ -25,10 +25,10 @@ index 91736b9..06b8ce1 100644
  
 diff --git a/src/lock_bg.rs b/src/lock_bg.rs
 new file mode 100644
-index 0000000..9910a24
+index 0000000..cfc7cc8
 --- /dev/null
 +++ b/src/lock_bg.rs
-@@ -0,0 +1,222 @@
+@@ -0,0 +1,225 @@
 +// Animated lock screen background: the driftpaper wallpaper image with
 +// drifting, twinkling sparks drawn on top. Reads ~/.config/driftpaper/config.ini
 +// so the lock screen matches the desktop.
@@ -36,6 +36,9 @@ index 0000000..9910a24
 +use cosmic::iced::widget::canvas::{self, Frame, Geometry, Path};
 +use cosmic::iced::{Color, Point, Rectangle, Vector, mouse};
 +use std::path::PathBuf;
++
++/// The animation pauses after this long without keyboard or pointer input.
++pub const PAUSE_AFTER: std::time::Duration = std::time::Duration::from_secs(5 * 60);
 +
 +/// Frame rate of the animation; halved on battery to save power.
 +pub fn fps(on_battery: bool) -> u64 {
@@ -252,7 +255,7 @@ index 0000000..9910a24
 +    }
 +}
 diff --git a/src/locker.rs b/src/locker.rs
-index ce1b3d1..d7d2b7b 100644
+index ce1b3d1..aef60e8 100644
 --- a/src/locker.rs
 +++ b/src/locker.rs
 @@ -4,7 +4,6 @@
@@ -298,15 +301,16 @@ index ce1b3d1..d7d2b7b 100644
  /// Convert PAM errors to user-friendly localized messages
  fn pam_error_to_message(error: &pam_client::Error) -> String {
      use pam_client::ErrorCode;
-@@ -281,6 +289,7 @@ pub enum Message {
+@@ -281,6 +289,8 @@ pub enum Message {
      Error(String),
      Lock,
      Unlock,
 +    Frame(Instant),
++    Activity,
  }
  
  impl From<common::Message> for Message {
-@@ -318,346 +327,156 @@ pub struct App {
+@@ -318,346 +328,178 @@ pub struct App {
      inhibit_opt: Option<Arc<OwnedFd>>,
      value_tx_opt: Option<mpsc::Sender<String>>,
      authenticating: bool,
@@ -314,6 +318,7 @@ index ce1b3d1..d7d2b7b 100644
 +    bg_image: Option<widget::image::Handle>,
 +    anim_start: Instant,
 +    anim_t: f32,
++    last_activity: Instant,
  }
  
  impl App {
@@ -360,8 +365,7 @@ index ce1b3d1..d7d2b7b 100644
 -            if let Some(network_icon) = self.common.network_icon_opt.as_ref() {
 -                status_row = status_row.push(network_icon.clone());
 -            }
-+        column = column.push(avatar);
- 
+-
 -            if let Some((power_icon, power_percent)) = &self.common.power_info_opt {
 -                status_row = status_row.push(
 -                    iced::widget::row![
@@ -371,7 +375,8 @@ index ce1b3d1..d7d2b7b 100644
 -                    .align_y(Alignment::Center),
 -                );
 -            }
--
++        column = column.push(avatar);
+ 
 -            //TODO: move code for custom dropdowns to libcosmic
 -            let menu_checklist = |label, value, message| {
 -                Element::from(
@@ -403,7 +408,33 @@ index ce1b3d1..d7d2b7b 100644
 -                    Element::from(
 -                        widget::scrollable(items)
 -                            .height(Length::Fixed(DEFAULT_MENU_ITEM_HEIGHT * 7.)),
--                    )
++        let name = if self.flags.user_data.full_name.is_empty() {
++            &self.flags.user_data.name
++        } else {
++            &self.flags.user_data.full_name
++        };
++        column = column.push(widget::text::title3(name));
++
++        if let Some((prompt, secret, value_opt)) = &self.common.prompt_opt {
++            match value_opt {
++                Some(value) => {
++                    let text_input_id = self
++                        .common
++                        .surface_names
++                        .get(&surface_id)
++                        .and_then(|id| self.common.text_input_ids.get(id))
++                        .cloned()
++                        .unwrap_or_else(|| cosmic::widget::Id::new("text_input"));
++
++                    let mut text_input = widget::secure_input(
++                        prompt.clone(),
++                        value.as_str(),
++                        Some(
++                            common::Message::Prompt(prompt.clone(), !*secret, Some(value.clone()))
++                                .into(),
++                        ),
++                        *secret,
+                     )
 -                } else {
 -                    Element::from(items)
 -                };
@@ -428,14 +459,28 @@ index ce1b3d1..d7d2b7b 100644
 -                            }
 -                        }))
 -                        .width(Length::Fixed(240.0));
--
++                    .id(text_input_id)
++                    .width(Length::Fill);
++
++                    // Don't allow input when authenticating
++                    if !self.authenticating {
++                        text_input = text_input
++                            .on_input(|input| {
++                                common::Message::Prompt(prompt.clone(), *secret, Some(input)).into()
++                            })
++                            .on_submit(Message::Submit);
++                    }
+ 
 -                if let Some(t) = self.common.rectangle_tracker.as_ref() {
 -                    Element::from(t.container((surface_id, true), menu))
 -                } else {
 -                    menu.into()
 -                }
 -            };
--
++                    if *secret {
++                        text_input = text_input.password()
++                    }
+ 
 -            let mut input_button = widget::popover(
 -                widget::container(
 -                    widget::button::custom(
@@ -464,10 +509,16 @@ index ce1b3d1..d7d2b7b 100644
 -                        i == self.common.current_keyboard_layout,
 -                        Message::KeyboardLayout(i),
 -                    ));
--                }
++                    column = column.push(widget::space::vertical().height(Length::Fixed(6.0)));
++                    column = column.push(text_input);
++                }
++                None => {
++                    column = column.push(widget::text(prompt));
+                 }
 -                input_button = input_button.popup(dropdown_menu(items));
--            }
--
+             }
++        }
+ 
 -            //TODO: implement these buttons
 -            let mut button_row = iced::widget::row![
 -                /*TODO: greeter accessibility options
@@ -509,12 +560,29 @@ index ce1b3d1..d7d2b7b 100644
 -                button_row,
 -            ])
 -            .align_x(Alignment::Start)
-+        let name = if self.flags.user_data.full_name.is_empty() {
-+            &self.flags.user_data.name
++        // One fixed-height status line so the card never changes size.
++        let status: Element<'_, Message> = if self.authenticating {
++            widget::row::with_capacity(2)
++                .spacing(8.0)
++                .align_y(Alignment::Center)
++                .push(widget::indeterminate_circular().size(14.0).bar_height(2.0))
++                .push(widget::text::caption(fl!("authenticating")))
++                .into()
++        } else if let Some(error) = &self.common.error_opt {
++            widget::text::caption(error)
++                .class(theme::Text::Color(iced::Color::from_rgb8(0xff, 0x8a, 0x80)))
++                .into()
++        } else if self.common.caps_lock {
++            widget::text::caption(fl!("caps-lock")).into()
 +        } else {
-+            &self.flags.user_data.full_name
++            widget::text::caption("").into()
          };
--
++        column = column.push(
++            widget::container(status)
++                .height(Length::Fixed(18.0))
++                .align_y(Alignment::Center),
++        );
+ 
 -        let right_element = {
 -            let mut column = widget::column::with_capacity(5)
 -                .spacing(12.0)
@@ -555,12 +623,30 @@ index ce1b3d1..d7d2b7b 100644
 -                );
 -            }
 -
--            column = column.push(
++        // With several keyboard layouts, a small button cycles through them.
++        let layouts = self.common.active_layouts.len();
++        if layouts > 1 {
++            let current = self.common.current_keyboard_layout;
++            let name = self
++                .common
++                .active_layouts
++                .get(current)
++                .map(|layout| layout.name())
++                .unwrap_or_default();
+             column = column.push(
 -                widget::container(widget::text::title4(&self.flags.user_data.full_name))
 -                    .width(Length::Fill)
 -                    .align_x(Alignment::Center),
--            );
--
++                widget::tooltip(
++                    widget::button::text(name)
++                        .leading_icon(widget::icon::from_name("input-keyboard-symbolic").size(16))
++                        .on_press(Message::KeyboardLayout((current + 1) % layouts)),
++                    widget::text(fl!("keyboard-layout")),
++                    widget::tooltip::Position::Bottom,
++                ),
+             );
++        }
+ 
 -            if let Some((prompt, secret, value_opt)) = &self.common.prompt_opt {
 -                match value_opt {
 -                    Some(value) => {
@@ -581,25 +667,7 @@ index ce1b3d1..d7d2b7b 100644
 -                                    !*secret,
 -                                    Some(value.clone()),
 -                                )
-+        column = column.push(widget::text::title3(name));
-+
-+        if let Some((prompt, secret, value_opt)) = &self.common.prompt_opt {
-+            match value_opt {
-+                Some(value) => {
-+                    let text_input_id = self
-+                        .common
-+                        .surface_names
-+                        .get(&surface_id)
-+                        .and_then(|id| self.common.text_input_ids.get(id))
-+                        .cloned()
-+                        .unwrap_or_else(|| cosmic::widget::Id::new("text_input"));
-+
-+                    let mut text_input = widget::secure_input(
-+                        prompt.clone(),
-+                        value.as_str(),
-+                        Some(
-+                            common::Message::Prompt(prompt.clone(), !*secret, Some(value.clone()))
-                                 .into(),
+-                                .into(),
 -                            ),
 -                            *secret,
 -                        )
@@ -626,29 +694,13 @@ index ce1b3d1..d7d2b7b 100644
 -                        } else if self.common.error_opt.is_none() {
 -                            column = column.push(widget::text(""));
 -                        }
-+                        ),
-+                        *secret,
-+                    )
-+                    .id(text_input_id)
-+                    .width(Length::Fill);
-+
-+                    // Don't allow input when authenticating
-+                    if !self.authenticating {
-+                        text_input = text_input
-+                            .on_input(|input| {
-+                                common::Message::Prompt(prompt.clone(), *secret, Some(input)).into()
-+                            })
-+                            .on_submit(Message::Submit);
-                     }
+-                    }
 -                    None => {
 -                        column = column.push(widget::text(prompt));
-+
-+                    if *secret {
-+                        text_input = text_input.password()
-                     }
+-                    }
 -                }
 -            }
- 
+-
 -            // Show either authenticating message or error message in the same location
 -            if self.authenticating {
 -                column = column.push(
@@ -669,37 +721,43 @@ index ce1b3d1..d7d2b7b 100644
 -                );
 -                if !self.common.caps_lock {
 -                    column = column.push(widget::text(""));
-+                    column = column.push(widget::space::vertical().height(Length::Fixed(6.0)));
-+                    column = column.push(text_input);
-+                }
-+                None => {
-+                    column = column.push(widget::text(prompt));
++        let available = self
++            .common
++            .subsurface_outputs
++            .get(&surface_id)
++            .and_then(|output| self.common.subsurface_rects.get(output))
++            .map_or(MAX_WIDTH, |rect| rect.width);
++        let card = widget::container(column)
++            .padding([36, 32, 24, 32])
++            .width(Length::Fixed(360f32.min(available - 32.).max(200.)))
++            .class(theme::Container::custom(|theme| {
++                let cosmic = theme.cosmic();
++                let mut bg: iced::Color = cosmic.background(theme.transparent).base.into();
++                bg.a = 0.72;
++                widget::container::Style {
++                    icon_color: Some(cosmic.on_bg_color().into()),
++                    text_color: Some(cosmic.on_bg_color().into()),
++                    background: Some(Background::Color(bg)),
++                    border: Border {
++                        radius: 24.0.into(),
++                        width: 1.0,
++                        color: iced::Color::from_rgba(1.0, 1.0, 1.0, 0.08),
++                    },
++                    shadow: iced::Shadow {
++                        color: iced::Color::from_rgba(0.0, 0.0, 0.0, 0.35),
++                        offset: iced::Vector::new(0.0, 8.0),
++                        blur_radius: 32.0,
++                    },
++                    ..Default::default()
                  }
 -            } else {
 -                column = column.push(widget::text(""));
-             }
-+        }
- 
+-            }
+-
 -            widget::container(column)
 -                .align_x(Alignment::Center)
 -                .width(Length::Fill)
-+        // One fixed-height status line so the card never changes size.
-+        let status: Element<'_, Message> = if self.authenticating {
-+            widget::row::with_capacity(2)
-+                .spacing(8.0)
-+                .align_y(Alignment::Center)
-+                .push(widget::indeterminate_circular().size(14.0).bar_height(2.0))
-+                .push(widget::text::caption(fl!("authenticating")))
-+                .into()
-+        } else if let Some(error) = &self.common.error_opt {
-+            widget::text::caption(error)
-+                .class(theme::Text::Color(iced::Color::from_rgb8(0xff, 0x8a, 0x80)))
-+                .into()
-+        } else if self.common.caps_lock {
-+            widget::text::caption(fl!("caps-lock")).into()
-+        } else {
-+            widget::text::caption("").into()
-         };
+-        };
 -        let menu = widget::layer_container(
 -            iced::widget::row![left_element, right_element].align_y(Alignment::Start),
 -        )
@@ -720,41 +778,6 @@ index ce1b3d1..d7d2b7b 100644
 -        .height(Length::Shrink);
 -        let menu = if let Some(t) = self.common.rectangle_tracker.as_ref() {
 -            Element::from(t.container((surface_id, false), menu))
-+        column = column.push(
-+            widget::container(status)
-+                .height(Length::Fixed(18.0))
-+                .align_y(Alignment::Center),
-+        );
-+
-+        let available = self
-+            .common
-+            .subsurface_outputs
-+            .get(&surface_id)
-+            .and_then(|output| self.common.subsurface_rects.get(output))
-+            .map_or(MAX_WIDTH, |rect| rect.width);
-+        let card = widget::container(column)
-+            .padding([36, 32, 24, 32])
-+            .width(Length::Fixed(360f32.min(available - 32.)))
-+            .class(theme::Container::custom(|theme| {
-+                let cosmic = theme.cosmic();
-+                let mut bg: iced::Color = cosmic.background(theme.transparent).base.into();
-+                bg.a = 0.72;
-+                widget::container::Style {
-+                    icon_color: Some(cosmic.on_bg_color().into()),
-+                    text_color: Some(cosmic.on_bg_color().into()),
-+                    background: Some(Background::Color(bg)),
-+                    border: Border {
-+                        radius: 24.0.into(),
-+                        width: 1.0,
-+                        color: iced::Color::from_rgba(1.0, 1.0, 1.0, 0.08),
-+                    },
-+                    shadow: iced::Shadow {
-+                        color: iced::Color::from_rgba(0.0, 0.0, 0.0, 0.35),
-+                        offset: iced::Vector::new(0.0, 8.0),
-+                        blur_radius: 32.0,
-+                    },
-+                    ..Default::default()
-+                }
 +            }));
 +        let card = if let Some(t) = self.common.rectangle_tracker.as_ref() {
 +            Element::from(t.container((surface_id, false), card))
@@ -786,7 +809,7 @@ index ce1b3d1..d7d2b7b 100644
      }
  }
  
-@@ -699,6 +518,7 @@ impl cosmic::Application for App {
+@@ -699,6 +541,7 @@ impl cosmic::Application for App {
              None => false,
          };
  
@@ -794,7 +817,7 @@ index ce1b3d1..d7d2b7b 100644
          let mut app = App {
              common,
              flags,
-@@ -707,6 +527,10 @@ impl cosmic::Application for App {
+@@ -707,6 +550,11 @@ impl cosmic::Application for App {
              inhibit_opt: None,
              value_tx_opt: None,
              authenticating: false,
@@ -802,20 +825,24 @@ index ce1b3d1..d7d2b7b 100644
 +            bg_image: bg_config.image.as_ref().map(widget::image::Handle::from_path),
 +            anim_start: Instant::now(),
 +            anim_t: 0.0,
++            last_activity: Instant::now(),
          };
  
          let task = if cfg!(feature = "logind") && app.flags.logind_available {
-@@ -733,6 +557,9 @@ impl cosmic::Application for App {
+@@ -733,6 +581,12 @@ impl cosmic::Application for App {
      fn update(&mut self, message: Self::Message) -> Task<Self::Message> {
          match message {
              Message::None => {}
++            Message::Activity => {
++                self.last_activity = Instant::now();
++            }
 +            Message::Frame(now) => {
 +                self.anim_t = now.duration_since(self.anim_start).as_secs_f32();
 +            }
              Message::Common(common_message) => {
                  if matches!(&common_message, common::Message::Prompt(_, _, Some(_)))
                      && self.authenticating
-@@ -805,17 +632,7 @@ impl cosmic::Application for App {
+@@ -805,17 +659,7 @@ impl cosmic::Application for App {
                          let unwrapped_size = size
                              .map(|s| (s.0.unwrap_or(1920), s.1.unwrap_or(1080)))
                              .unwrap_or((1920, 1080));
@@ -834,7 +861,7 @@ index ce1b3d1..d7d2b7b 100644
                          self.common.window_size.insert(
                              surface_id,
                              Size::new(unwrapped_size.0 as f32, unwrapped_size.1 as f32),
-@@ -886,14 +703,7 @@ impl cosmic::Application for App {
+@@ -886,14 +730,7 @@ impl cosmic::Application for App {
                          let unwrapped_size = size
                              .map(|s| (s.0.unwrap_or(1920), s.1.unwrap_or(1080)))
                              .unwrap_or((1920, 1080));
@@ -850,7 +877,19 @@ index ce1b3d1..d7d2b7b 100644
                          self.common
                              .subsurface_rects
                              .insert(output.clone(), Rectangle::new(loc, sub_size));
-@@ -1218,8 +1028,30 @@ impl cosmic::Application for App {
+@@ -906,6 +743,11 @@ impl cosmic::Application for App {
+                 SessionLockEvent::Focused(..) => {}
+                 SessionLockEvent::Locked => {
+                     tracing::info!("session locked");
++                    self.last_activity = Instant::now();
++                    // Pick up wallpaper changes made since the last lock.
++                    let bg_config = lock_bg::load_config();
++                    self.bg_field = lock_bg::Field::new(&bg_config);
++                    self.bg_image = bg_config.image.as_ref().map(widget::image::Handle::from_path);
+                     if matches!(self.state, State::Locked { .. }) {
+                         return Task::none();
+                     }
+@@ -1218,8 +1060,30 @@ impl cosmic::Application for App {
      }
  
      /// Creates a view after each update.
@@ -883,12 +922,24 @@ index ce1b3d1..d7d2b7b 100644
      }
  
      fn subscription(&self) -> Subscription<Self::Message> {
-@@ -1257,6 +1089,14 @@ impl cosmic::Application for App {
+@@ -1257,6 +1121,26 @@ impl cosmic::Application for App {
              }),
          );
  
-+        // Animate the background only while it is on screen.
++        // Animate the background only while it is on screen, and pause once
++        // nobody has touched the machine for a while (the screen is usually
++        // off by then). Any key or pointer movement starts it again.
 +        if matches!(self.state, State::Locked { .. }) {
++            subscriptions.push(iced::event::listen_with(|event, _, _| match event {
++                iced::Event::Keyboard(_) | iced::Event::Mouse(_) | iced::Event::Touch(_) => {
++                    Some(Message::Activity)
++                }
++                _ => None,
++            }));
++        }
++        if matches!(self.state, State::Locked { .. })
++            && self.last_activity.elapsed() < lock_bg::PAUSE_AFTER
++        {
 +            subscriptions.push(
 +                iced::time::every(Duration::from_millis(1000 / lock_bg::fps(self.common.on_battery)))
 +                    .map(Message::Frame),

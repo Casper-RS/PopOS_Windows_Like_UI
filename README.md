@@ -54,16 +54,6 @@ All applets come in one Flatpak.
 - **Search:** click the search box or press `Ctrl+Super+F` and type. Results are grouped into Apps, Settings and Folders; Enter opens the selected one (a settings page opens in COSMIC Settings, a folder in your file manager). Use the arrow keys to move, Esc or a click outside to close.
 - **Clipboard history:** press `Super+V`, then click an item (or use the arrow keys and Enter) to paste it into the window you were in. Pin items to keep them after logging out; Delete removes the selected item. Copies that password managers mark as secret are never recorded, and the rest is kept in memory only.
 
-## Log in once per boot (optional)
-
-If your disk is encrypted, you can skip the login password after the disk password:
-
-```sh
-./scripts/autologin.sh
-```
-
-It also opens a dialog to remove the keyring password (type your current password, leave the new one empty), so Chrome and other apps stop asking for it. It refuses to run if the disk isn't encrypted. Undo with `./scripts/autologin.sh --undo`.
-
 ## Install
 
 ```sh
@@ -73,6 +63,16 @@ cd PopOS_Windows_Like_UI
 ```
 
 Then log out and back in.
+
+### Optional: only type a password once per boot
+
+If your disk is encrypted, run this to log in automatically after the disk password:
+
+```sh
+./scripts/autologin.sh
+```
+
+It asks for your password once (sudo), then opens a dialog to remove the keyring password: type your current password and leave the new one empty, so Chrome and other apps stop asking for it. It refuses to run if the disk isn't encrypted. Undo with `./scripts/autologin.sh --undo`.
 
 To build from source instead of downloading the release, run `./scripts/install.sh --build`.
 
