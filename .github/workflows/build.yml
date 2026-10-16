@@ -23,7 +23,9 @@ jobs:
         with:
           bundle: io.github.casper_rs.PopOSWindowsLikeUI.flatpak
           manifest-path: flatpak/io.github.casper_rs.PopOSWindowsLikeUI.yml
-          cache-key: flatpak-builder-${{ github.sha }}
+          # The action restores the newest cache starting with
+          # "flatpak-builder-<arch>", so the key has to start with that too.
+          cache-key: flatpak-builder-x86_64-${{ github.sha }}
       - name: Attach to release
         if: startsWith(github.ref, 'refs/tags/')
         uses: softprops/action-gh-release@v2
@@ -33,6 +35,8 @@ jobs:
   lockscreen:
     # Same Ubuntu base (and glibc) as Pop!_OS 24.04.
     runs-on: ubuntu-24.04
+    env:
+      LOCKSCREEN_BUILD_DIR: ${{ github.workspace }}/.lockscreen-build
     permissions:
       contents: write
     steps:
@@ -43,6 +47,9 @@ jobs:
           sudo apt-get install -y libpam0g-dev libclang-dev libxkbcommon-dev libudev-dev \
             libinput-dev libdav1d-dev libwayland-dev libfontconfig-dev pkg-config
       - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: .lockscreen-build/cosmic-greeter -> target
       - name: Build
         run: cp "$(lockscreen/build.sh | tail -n 1)" cosmic-greeter-lockscreen
       - uses: actions/upload-artifact@v4

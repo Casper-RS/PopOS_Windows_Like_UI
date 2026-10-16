@@ -58,13 +58,19 @@ modules:
     build-commands:
       # cosmic-comp-config links libinput without using it; the SDK lacks it.
       - mkdir -p stub && cc -shared -o stub/libinput.so -x c /dev/null
-      - RUSTFLAGS="-L $PWD/stub" cargo build --release --locked -p cosmic-app-list -p cosmic-applet-input-sources
-        -p cosmic-applet-power -p cosmic-panel-button -p wlui-clipboard
-      - install -Dm755 target/release/cosmic-app-list /app/libexec/wlui/cosmic-app-list
-      - install -Dm755 target/release/cosmic-applet-input-sources /app/libexec/wlui/cosmic-applet-input-sources
-      - install -Dm755 target/release/cosmic-applet-power /app/libexec/wlui/cosmic-applet-power
-      - install -Dm755 target/release/cosmic-panel-button /app/libexec/wlui/cosmic-panel-button
-      - install -Dm755 target/release/wlui-clipboard /app/libexec/wlui/wlui-clipboard
+      # With --ccache (as in CI) /run/ccache survives between builds: keep
+      # Cargo's crates and compiled dependencies there so a patch change
+      # only recompiles the applets.
+      - |
+        if [ -w /run/ccache ]; then
+          export CARGO_HOME=/run/ccache/cargo-home CARGO_TARGET_DIR=/run/ccache/cargo-target
+        fi
+        RUSTFLAGS="-L $PWD/stub" cargo build --release --locked -p cosmic-app-list -p cosmic-applet-input-sources \
+          -p cosmic-applet-power -p cosmic-panel-button -p wlui-clipboard
+        out=${CARGO_TARGET_DIR:-target}/release
+        for bin in cosmic-app-list cosmic-applet-input-sources cosmic-applet-power cosmic-panel-button wlui-clipboard; do
+          install -Dm755 "$out/$bin" "/app/libexec/wlui/$bin"
+        done
 
   - name: status-hub
     buildsystem: simple
