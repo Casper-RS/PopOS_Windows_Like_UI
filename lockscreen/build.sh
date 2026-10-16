@@ -19,8 +19,13 @@ mkdir -p "$WORK"
 # Source at the pinned commit. The repo keeps its images in Git LFS; skip
 # that and fetch the one image the build embeds.
 if [ ! -d "$SRC/.git" ]; then
-    GIT_LFS_SKIP_SMUDGE=1 git -c filter.lfs.process= -c filter.lfs.smudge=cat \
-        -c filter.lfs.required=false clone -q https://github.com/pop-os/cosmic-greeter "$SRC"
+    # Clone without checkout next to $SRC and move .git in: $SRC may already
+    # hold a cached target/ dir (CI restores it before this runs).
+    rm -rf "$SRC.clone"
+    git clone -q --no-checkout https://github.com/pop-os/cosmic-greeter "$SRC.clone"
+    mkdir -p "$SRC"
+    mv "$SRC.clone/.git" "$SRC/.git"
+    rm -rf "$SRC.clone"
 fi
 git -C "$SRC" config filter.lfs.process ""
 git -C "$SRC" config filter.lfs.smudge cat
