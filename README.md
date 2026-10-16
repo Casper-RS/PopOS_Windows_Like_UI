@@ -14,6 +14,8 @@ All applets come in one Flatpak.
 - Clean tray: Status Hub collects app tray icons, plus a system monitor, network, Bluetooth, battery (laptops only), sound, clock and notifications
 - **Clipboard history** on `Super+V`: your last 25 copies (text and screenshots), pin the ones you want to keep
 - **Search** finds apps, settings pages and folders, grouped so you can tell them apart; `Ctrl+Super+F` opens it on the monitor you're working on
+- **Lock screen** with just your picture, name and password on a card, over your wallpaper with drifting sparks (matches [driftpaper](https://github.com/Casper-RS/driftpaper) if you use it)
+- **Fits laptops:** on screens under 1500px wide the search box shrinks to an icon, and window previews and the lock screen card stay within the screen
 - Shortcuts: `Ctrl+Super+F` search, `Super+V` clipboard history, `Super+I` Settings, `Super+L` lock, `Super+Shift+L` log out
 
 ## Screenshots
@@ -52,6 +54,16 @@ All applets come in one Flatpak.
 - **Search:** click the search box or press `Ctrl+Super+F` and type. Results are grouped into Apps, Settings and Folders; Enter opens the selected one (a settings page opens in COSMIC Settings, a folder in your file manager). Use the arrow keys to move, Esc or a click outside to close.
 - **Clipboard history:** press `Super+V`, then click an item (or use the arrow keys and Enter) to paste it into the window you were in. Pin items to keep them after logging out; Delete removes the selected item. Copies that password managers mark as secret are never recorded, and the rest is kept in memory only.
 
+## Log in once per boot (optional)
+
+If your disk is encrypted, you can skip the login password after the disk password:
+
+```sh
+./scripts/autologin.sh
+```
+
+It also opens a dialog to remove the keyring password (type your current password, leave the new one empty), so Chrome and other apps stop asking for it. It refuses to run if the disk isn't encrypted. Undo with `./scripts/autologin.sh --undo`.
+
 ## Install
 
 ```sh
@@ -63,6 +75,8 @@ cd PopOS_Windows_Like_UI
 Then log out and back in.
 
 To build from source instead of downloading the release, run `./scripts/install.sh --build`.
+
+The lock screen is a patched copy of COSMIC's `cosmic-greeter` installed in `~/.local/bin` (your login screen stays as it is). It's made for COSMIC 1.10 and skipped on other versions; skip it yourself with `NO_LOCKSCREEN=1 ./scripts/install.sh`. If it ever won't unlock, press `Ctrl+Alt+F3`, log in and run `rm ~/.local/bin/cosmic-greeter; pkill -x cosmic-greeter; loginctl unlock-sessions`.
 
 ## Uninstall
 
@@ -77,5 +91,6 @@ This restores your previous panel and shortcuts.
 - Built on [COSMIC applets](https://github.com/pop-os/cosmic-applets) by System76
 - [Status Hub](https://github.com/marcelogomes90/cosmic-ext-applet-status-hub) by marcelogomes90
 - [System Monitor](https://github.com/D-Brox/cosmic-ext-applet-system-monitor) by D-Brox
+- [COSMIC Greeter](https://github.com/pop-os/cosmic-greeter) by System76 (lock screen)
 
 Licensed under GPL-3.0.

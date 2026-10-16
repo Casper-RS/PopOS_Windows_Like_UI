@@ -19,7 +19,13 @@ else
 fi
 
 rm -f "$HOME/.config/autostart/$APP.Clipboard.desktop"
+if [ -f "$HOME/.local/share/windows-like-ui/lockscreen-installed" ]; then
+    rm -f "$HOME/.local/bin/cosmic-greeter"
+    pkill -x -u "$(id -un)" cosmic-greeter || true
+    echo "Restored the stock lock screen."
+fi
 rm -rf "$HOME/.local/share/windows-like-ui"
 flatpak kill "$APP" 2>/dev/null || true
 flatpak uninstall --user -y --noninteractive "$APP" || true
 echo "Done. Log out and back in to finish."
+echo "Autologin, if you enabled it, stays on; turn it off with ./scripts/autologin.sh --undo"

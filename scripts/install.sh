@@ -5,6 +5,9 @@
 #   ./scripts/install.sh --bundle FILE   install a local .flatpak bundle
 #   ./scripts/install.sh --build         build from source with flatpak-builder
 #   ./scripts/install.sh --layout-only   only apply the panel layout and shortcuts
+#
+# Also installs the lock screen (a patched cosmic-greeter in ~/.local/bin; skip it with
+# NO_LOCKSCREEN=1). Autologin is separate: ./scripts/autologin.sh
 set -eu
 
 APP=io.github.casper_rs.PopOSWindowsLikeUI
@@ -144,5 +147,33 @@ X-GNOME-Autostart-enabled=true
 NoDisplay=true
 DESKTOP
 
+# Lock screen: cosmic-session starts `cosmic-greeter` from PATH, so a copy in
+# ~/.local/bin replaces the stock lock screen for this user only (the login
+# screen is untouched). Only for the COSMIC version the patch was made for.
+greeter_version=$(dpkg-query -W -f='${Version}' cosmic-greeter 2>/dev/null || true)
+if [ "${NO_LOCKSCREEN:-}" = 1 ] || [ "$mode" = none ]; then
+    :
+elif [ "${greeter_version#1.10.}" = "$greeter_version" ]; then
+    echo "Skipping the lock screen: it is made for COSMIC 1.10, this system has cosmic-greeter ${greeter_version:-(none)}."
+else
+    mkdir -p "$HOME/.local/bin"
+    dest="$HOME/.local/bin/cosmic-greeter"
+    # Prefer the release binary; build it (a few minutes) when there is none.
+    if [ "$mode" = build ] || ! curl -fsL -o "$dest.new" \
+            "https://github.com/$REPO/releases/latest/download/cosmic-greeter-lockscreen"; then
+        echo "Building the lock screen..."
+        bin=$("$HERE/lockscreen/build.sh" --sdk | tail -n 1)
+        cp "$bin" "$dest.new"
+    fi
+    chmod 755 "$dest.new"
+    mv "$dest.new" "$dest"
+    mkdir -p "$HOME/.local/share/windows-like-ui"
+    touch "$HOME/.local/share/windows-like-ui/lockscreen-installed"
+    # cosmic-session restarts it right away with the new binary.
+    pkill -x -u "$(id -un)" cosmic-greeter || true
+    echo "Installed the lock screen."
+fi
+
 echo
 echo "Done. Log out and back in to finish (the notifications icon needs a fresh session)."
+echo "To skip the login password after unlocking the disk, run ./scripts/autologin.sh"

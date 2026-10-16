@@ -46,7 +46,7 @@ index 77d96a98..8c460f07 100644
  
  resolver = "3"
 diff --git a/cosmic-app-list/src/app.rs b/cosmic-app-list/src/app.rs
-index 3e5a3a6d..92e84253 100755
+index 3e5a3a6d..0b39b194 100755
 --- a/cosmic-app-list/src/app.rs
 +++ b/cosmic-app-list/src/app.rs
 @@ -32,7 +32,7 @@ use cosmic::{
@@ -188,7 +188,33 @@ index 3e5a3a6d..92e84253 100755
                  border_radius: radius.into(),
                  outline_width: 0.0,
                  ..a
-@@ -841,6 +878,22 @@ impl CosmicAppList {
+@@ -643,6 +680,25 @@ fn find_desktop_entries<'a>(
+ }
+ 
+ impl CosmicAppList {
++    /// Size limits for hover popups, so window previews stay on this
++    /// applet's screen (laptops included).
++    fn popup_limits(&self) -> Limits {
++        let screen = self
++            .output_list
++            .values()
++            .find(|info| info.name.as_deref() == Some(self.core.applet.output_name.as_str()))
++            .and_then(|info| info.logical_size);
++        let (max_w, max_h) = match screen {
++            Some((w, h)) => ((w as f32 - 16.).max(200.), (h as f32 * 0.8).max(200.)),
++            None => (1920., 1000.),
++        };
++        Limits::NONE
++            .min_width(1.)
++            .min_height(1.)
++            .max_width(max_w)
++            .max_height(max_h)
++    }
++
+     // Cache all desktop entries to use when new apps are added to the dock.
+     fn update_desktop_entries(&mut self) {
+         self.desktop_entries = fde::Iter::new(fde::default_paths())
+@@ -841,6 +897,22 @@ impl CosmicAppList {
          self.currently_active_toplevel().contains(handle)
      }
  
@@ -211,7 +237,7 @@ index 3e5a3a6d..92e84253 100755
      // Check if a specific toplevel button is currently hovered
      fn is_hovered(&self, handle: &ExtForeignToplevelHandleV1) -> bool {
          self.hovered_toplevel.as_ref() == Some(handle)
-@@ -998,50 +1051,23 @@ impl cosmic::Application for CosmicAppList {
+@@ -998,50 +1070,23 @@ impl cosmic::Application for CosmicAppList {
                          dock_item: toplevel_group.clone(),
                          popup_type: PopupType::ToplevelList,
                      });
@@ -272,7 +298,7 @@ index 3e5a3a6d..92e84253 100755
                                  popup_settings
                              },
                              None,
-@@ -1050,6 +1076,205 @@ impl cosmic::Application for CosmicAppList {
+@@ -1050,6 +1095,205 @@ impl cosmic::Application for CosmicAppList {
                      return popup_task;
                  }
              }
@@ -478,7 +504,7 @@ index 3e5a3a6d..92e84253 100755
              Message::ToplevelHoverChanged(handle, entering) => {
                  match (entering, &self.hovered_toplevel) {
                      (true, _) => self.hovered_toplevel = Some(handle),
-@@ -1503,6 +1728,19 @@ impl cosmic::Application for CosmicAppList {
+@@ -1503,6 +1747,19 @@ impl cosmic::Application for CosmicAppList {
                                      .map(|(k, v)| (k.clone(), v.clone())),
                              );
                          }
@@ -498,7 +524,7 @@ index 3e5a3a6d..92e84253 100755
                          tokio::spawn(async move {
                              cosmic::desktop::spawn_desktop_exec(
                                  exec,
-@@ -1540,6 +1778,7 @@ impl cosmic::Application for CosmicAppList {
+@@ -1540,6 +1797,7 @@ impl cosmic::Application for CosmicAppList {
                  }
              },
              Message::ClosePopup => {
@@ -506,7 +532,7 @@ index 3e5a3a6d..92e84253 100755
                  if let Some(p) = self.popup.take() {
                      return destroy_popup(p.id);
                  }
-@@ -1810,7 +2049,7 @@ impl cosmic::Application for CosmicAppList {
+@@ -1810,7 +2068,7 @@ impl cosmic::Application for CosmicAppList {
                          dock_item.as_icon(
                              &self.core.applet,
                              self.rectangle_tracker.as_ref(),
@@ -515,7 +541,7 @@ index 3e5a3a6d..92e84253 100755
                              self.config.enable_drag_source,
                              self.gpus.as_deref(),
                              filtered_is_focused,
-@@ -1823,7 +2062,7 @@ impl cosmic::Application for CosmicAppList {
+@@ -1823,7 +2081,7 @@ impl cosmic::Application for CosmicAppList {
                              .full_name(&self.locales)
                              .unwrap_or_default()
                              .into_owned(),
@@ -524,7 +550,7 @@ index 3e5a3a6d..92e84253 100755
                          Message::Surface,
                          None,
                      )
-@@ -1923,7 +2162,7 @@ impl cosmic::Application for CosmicAppList {
+@@ -1923,7 +2181,7 @@ impl cosmic::Application for CosmicAppList {
                              dock_item.as_icon(
                                  &self.core.applet,
                                  self.rectangle_tracker.as_ref(),
@@ -533,7 +559,7 @@ index 3e5a3a6d..92e84253 100755
                                  self.config.enable_drag_source,
                                  self.gpus.as_deref(),
                                  filtered_is_focused,
-@@ -1936,7 +2175,7 @@ impl cosmic::Application for CosmicAppList {
+@@ -1936,7 +2194,7 @@ impl cosmic::Application for CosmicAppList {
                                  .full_name(&self.locales)
                                  .unwrap_or_default()
                                  .into_owned(),
@@ -542,7 +568,7 @@ index 3e5a3a6d..92e84253 100755
                              Message::Surface,
                              None,
                          )
-@@ -2251,7 +2490,28 @@ impl cosmic::Application for CosmicAppList {
+@@ -2251,7 +2509,28 @@ impl cosmic::Application for CosmicAppList {
                          )
                          .into()
                  }
@@ -572,7 +598,7 @@ index 3e5a3a6d..92e84253 100755
                      PanelAnchor::Left | PanelAnchor::Right => {
                          let mut content =
                              column![].padding(8).align_x(Alignment::Center).spacing(8);
-@@ -2262,13 +2522,17 @@ impl cosmic::Application for CosmicAppList {
+@@ -2262,13 +2541,17 @@ impl cosmic::Application for CosmicAppList {
                                  info.foreign_toplevel.clone(),
                                  self.is_focused(&info.foreign_toplevel),
                                  self.is_hovered(&info.foreign_toplevel),
@@ -595,7 +621,7 @@ index 3e5a3a6d..92e84253 100755
                      }
                      PanelAnchor::Bottom | PanelAnchor::Top => {
                          let mut content = row![].padding(8).align_y(Alignment::Center).spacing(8);
-@@ -2279,15 +2543,20 @@ impl cosmic::Application for CosmicAppList {
+@@ -2279,15 +2562,20 @@ impl cosmic::Application for CosmicAppList {
                                  info.foreign_toplevel.clone(),
                                  self.is_focused(&info.foreign_toplevel),
                                  self.is_hovered(&info.foreign_toplevel),
@@ -622,7 +648,37 @@ index 3e5a3a6d..92e84253 100755
              }
          } else if self
              .overflow_active_popup
-@@ -2505,7 +2774,13 @@ impl cosmic::Application for CosmicAppList {
+@@ -2380,13 +2668,7 @@ impl cosmic::Application for CosmicAppList {
+             self.core
+                 .applet
+                 .popup_container(content)
+-                .limits(
+-                    Limits::NONE
+-                        .min_width(1.)
+-                        .min_height(1.)
+-                        .max_width(1920.)
+-                        .max_height(1000.),
+-                )
++                .limits(self.popup_limits())
+                 .into()
+         } else if self
+             .overflow_favorites_popup
+@@ -2487,13 +2769,7 @@ impl cosmic::Application for CosmicAppList {
+             self.core
+                 .applet
+                 .popup_container(content)
+-                .limits(
+-                    Limits::NONE
+-                        .min_width(1.)
+-                        .min_height(1.)
+-                        .max_width(1920.)
+-                        .max_height(1000.),
+-                )
++                .limits(self.popup_limits())
+                 .into()
+         } else {
+             let suggested = self.core.applet.suggested_size(false);
+@@ -2505,7 +2781,13 @@ impl cosmic::Application for CosmicAppList {
      }
  
      fn subscription(&self) -> Subscription<Message> {
@@ -636,7 +692,7 @@ index 3e5a3a6d..92e84253 100755
              wayland_subscription().map(Message::Wayland),
              listen_with(|e, _, id| match e {
                  cosmic::iced::core::Event::PlatformSpecific(event::PlatformSpecific::Wayland(
-@@ -2517,6 +2792,14 @@ impl cosmic::Application for CosmicAppList {
+@@ -2517,6 +2799,14 @@ impl cosmic::Application for CosmicAppList {
                  cosmic::iced::core::Event::Mouse(
                      cosmic::iced::core::mouse::Event::ButtonPressed(_),
                  ) => Some(Message::Pressed(id)),
@@ -651,7 +707,7 @@ index 3e5a3a6d..92e84253 100755
                  _ => None,
              }),
              rectangle_tracker_subscription(0).map(|update| Message::Rectangle(update.1)),
-@@ -2596,3 +2879,168 @@ impl AsMimeTypes for DndPathBuf {
+@@ -2596,3 +2886,168 @@ impl AsMimeTypes for DndPathBuf {
          Some(Cow::Owned(self.0.to_str()?.as_bytes().to_vec()))
      }
  }
@@ -1823,7 +1879,7 @@ index 9e8e266f..4562ca5e 100644
  serde.workspace = true
 +zbus.workspace = true
 diff --git a/cosmic-panel-button/src/lib.rs b/cosmic-panel-button/src/lib.rs
-index 68c55af0..a05f0401 100644
+index 68c55af0..e91e9062 100644
 --- a/cosmic-panel-button/src/lib.rs
 +++ b/cosmic-panel-button/src/lib.rs
 @@ -15,10 +15,17 @@ use cosmic::{
@@ -1845,7 +1901,7 @@ index 68c55af0..a05f0401 100644
  
  static AUTOSIZE_MAIN_ID: LazyLock<Id> = LazyLock::new(|| Id::new("autosize-main"));
  
-@@ -33,11 +40,71 @@ struct Button {
+@@ -33,11 +40,74 @@ struct Button {
      core: cosmic::app::Core,
      desktop: Desktop,
      config: IndividualConfig,
@@ -1864,6 +1920,9 @@ index 68c55af0..a05f0401 100644
 +/// argument, the button is drawn as a rounded "Search" field.
 +static SEARCH_MODE: LazyLock<bool> =
 +    LazyLock::new(|| env::args().nth(2).is_some_and(|a| a == "search"));
++
++/// Screens narrower than this (logical px) get an icon-only search box.
++const COMPACT_SEARCH_BELOW: i32 = 1500;
 +
 +fn search_box_style() -> cosmic::theme::Button {
 +    fn style(theme: &cosmic::Theme, hovered: bool, pressed: bool) -> cosmic::widget::button::Style {
@@ -1917,7 +1976,7 @@ index 68c55af0..a05f0401 100644
      ConfigUpdated(CosmicPanelButtonConfig),
      Surface(surface::Action<Msg>),
  }
-@@ -103,6 +170,11 @@ impl cosmic::Application for Button {
+@@ -103,6 +173,11 @@ impl cosmic::Application for Button {
                  core,
                  desktop,
                  config,
@@ -1929,7 +1988,7 @@ index 68c55af0..a05f0401 100644
              },
              Task::none(),
          )
-@@ -123,15 +195,7 @@ impl cosmic::Application for Button {
+@@ -123,15 +198,7 @@ impl cosmic::Application for Button {
      fn update(&mut self, message: Msg) -> app::Task<Msg> {
          match message {
              Msg::Press => {
@@ -1946,7 +2005,7 @@ index 68c55af0..a05f0401 100644
              }
              Msg::ConfigUpdated(conf) => {
                  self.config = conf
-@@ -143,11 +207,239 @@ impl cosmic::Application for Button {
+@@ -143,11 +210,249 @@ impl cosmic::Application for Button {
              Msg::Surface(a) => {
                  return cosmic::task::message(cosmic::Action::Surface(a));
              }
@@ -2084,6 +2143,12 @@ index 68c55af0..a05f0401 100644
 +            let typing = self.popup.is_some();
 +            let caret = typing && self.caret_visible;
 +            let placeholder = self.search.query.is_empty();
++            // On narrow screens the box is just a search icon until you type.
++            let compact = !typing
++                && self
++                    .focus
++                    .screen_width(&self.core.applet.output_name)
++                    .is_some_and(|w| w < COMPACT_SEARCH_BELOW);
 +            // While open, the caret takes the place of the placeholder.
 +            let query = if placeholder && typing {
 +                String::new()
@@ -2116,7 +2181,7 @@ index 68c55af0..a05f0401 100644
 +                            }))),
 +                        // Dimmed like an input placeholder. The invisible longer
 +                        // text keeps the box at a comfortable width.
-+                        cosmic::iced::widget::stack![
++                        (!compact).then(|| cosmic::iced::widget::stack![
 +                            cosmic::widget::text::body("Search anything...").size(px(14.0)).class(
 +                                cosmic::theme::Text::Custom(|_| {
 +                                    cosmic::iced::widget::text::Style {
@@ -2162,14 +2227,18 @@ index 68c55af0..a05f0401 100644
 +                            )
 +                            .spacing(if typing && !placeholder { 1.0 } else { 0.0 })
 +                            .align_y(iced::Alignment::Center),
-+                        ],
++                        ]),
 +                    )
 +                    .spacing(px(8.0))
 +                    .align_y(iced::Alignment::Center),
 +                )
 +                .center_y(Length::Fill),
 +            )
-+            .padding([0.0, px(22.0), 0.0, px(14.0)])
++            .padding(if compact {
++                [0.0, px(14.0), 0.0, px(14.0)]
++            } else {
++                [0.0, px(22.0), 0.0, px(14.0)]
++            })
 +            .width(Length::Shrink)
 +            .height(Length::Fixed((outer_h - px(12.0)).max(20.0)))
 +            .class(search_box_style())
@@ -2186,7 +2255,7 @@ index 68c55af0..a05f0401 100644
          // currently, panel being anchored to the left or right is a hard
          // override for icon, later if text is updated to wrap, we may
          // use Override::Text to override this behavior
-@@ -201,15 +493,138 @@ impl cosmic::Application for Button {
+@@ -201,15 +506,138 @@ impl cosmic::Application for Button {
      }
  
      fn subscription(&self) -> iced::Subscription<Self::Message> {
@@ -2326,7 +2395,7 @@ index 68c55af0..a05f0401 100644
  pub fn run() -> iced::Result {
      let id = env::args()
          .nth(1)
-@@ -242,3 +657,39 @@ pub fn run() -> iced::Result {
+@@ -242,3 +670,39 @@ pub fn run() -> iced::Result {
      });
      cosmic::applet::run::<Button>(desktop)
  }
@@ -2967,10 +3036,10 @@ index 00000000..43889b9c
 +}
 diff --git a/cosmic-panel-button/src/shortcut.rs b/cosmic-panel-button/src/shortcut.rs
 new file mode 100644
-index 00000000..e3a4aaa5
+index 00000000..ddffb524
 --- /dev/null
 +++ b/cosmic-panel-button/src/shortcut.rs
-@@ -0,0 +1,178 @@
+@@ -0,0 +1,192 @@
 +//! Keyboard shortcut for the search box: the shortcut emits a D-Bus signal that
 +//! every search box hears, and only the one on the monitor with the focused
 +//! window opens.
@@ -3040,6 +3109,8 @@ index 00000000..e3a4aaa5
 +    focused: Option<String>,
 +    /// Top-left monitor, used while no window has focus.
 +    first: Option<String>,
++    /// Logical width of each monitor, by name.
++    widths: Vec<(String, i32)>,
 +}
 +
 +/// Knows which monitor the search box should open on.
@@ -3065,6 +3136,12 @@ index 00000000..e3a4aaa5
 +            }
 +        });
 +        focus
++    }
++
++    /// Logical width of the named monitor, once known.
++    pub fn screen_width(&self, output: &str) -> Option<i32> {
++        let monitors = self.0.lock().unwrap();
++        monitors.widths.iter().find(|(name, _)| name == output).map(|(_, w)| *w)
 +    }
 +
 +    pub fn opens_on(&self, output: &str) -> bool {
@@ -3100,7 +3177,13 @@ index 00000000..e3a4aaa5
 +            .filter_map(|o| self.output_state.info(&o))
 +            .min_by_key(|info| info.logical_position.map_or((0, 0), |(x, y)| (y, x)))
 +            .and_then(|info| info.name);
-+        *self.monitors.lock().unwrap() = Monitors { focused, first };
++        let widths = self
++            .output_state
++            .outputs()
++            .filter_map(|o| self.output_state.info(&o))
++            .filter_map(|info| Some((info.name?, info.logical_size?.0)))
++            .collect();
++        *self.monitors.lock().unwrap() = Monitors { focused, first, widths };
 +    }
 +}
 +
