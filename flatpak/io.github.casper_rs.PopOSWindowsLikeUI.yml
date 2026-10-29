@@ -95,7 +95,7 @@ modules:
     sources:
       - type: git
         url: https://github.com/Casper-RS/PopOS_Cosmic-DE_System_Analysis.git
-        commit: 86745994e335483a62d2394def9d0648a7880166
+        commit: ba2b63841a2bd7774100526e8b05c8085227ec6d
     build-commands:
       - cargo build --release --locked
       - install -Dm755 target/release/cosmic-ext-applet-system-monitor /app/libexec/wlui/cosmic-ext-applet-system-monitor
