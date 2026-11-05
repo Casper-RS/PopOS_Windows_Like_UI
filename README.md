@@ -12,6 +12,7 @@ All applets come in one Flatpak.
 - **Taskbar** that shows window previews on hover, or the app name when it has no windows
 - **Keyboard layout** shown in two lines, like `EN` / `US`
 - Clean tray: Status Hub collects app tray icons, plus a system monitor, network, Bluetooth, battery (laptops only), sound, clock and notifications
+- **Screen dimmer**: a sun button next to sound with a brightness slider (20–100%). It dims with a click-through overlay, so it works on monitors without a backlight
 - **Clipboard history** on `Super+V`: your last 25 copies (text and screenshots), pin the ones you want to keep
 - **Search** finds apps, settings pages and folders, grouped so you can tell them apart; `Ctrl+Super+F` opens it on the monitor you're working on
 - **Lock screen** with just your picture, name and password on a card, over your wallpaper with drifting sparks (matches [driftpaper](https://github.com/Casper-RS/driftpaper) if you use it)

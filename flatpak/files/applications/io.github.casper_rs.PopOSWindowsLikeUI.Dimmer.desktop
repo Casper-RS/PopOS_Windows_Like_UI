@@ -1,0 +1,12 @@
+[Desktop Entry]
+Type=Application
+Terminal=false
+NoDisplay=true
+Categories=COSMIC;
+X-CosmicApplet=true
+Name=Screen Dimmer (Windows-like)
+Comment=Brightness slider that dims the screen
+Exec=wlui-dimmer
+Icon=display-brightness-symbolic
+X-CosmicHoverPopup=Auto
+X-OverflowPriority=10

@@ -100,6 +100,7 @@ Some(([
     "com.system76.CosmicAppletNetwork",
     "com.system76.CosmicAppletBluetooth",
 ${battery}    "com.system76.CosmicAppletAudio",
+    "$APP.Dimmer",
     "com.system76.CosmicAppletTime",
     "com.system76.CosmicAppletNotifications",
 ]))

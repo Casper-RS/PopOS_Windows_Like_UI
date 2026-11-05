@@ -66,9 +66,9 @@ modules:
           export CARGO_HOME=/run/ccache/cargo-home CARGO_TARGET_DIR=/run/ccache/cargo-target
         fi
         RUSTFLAGS="-L $PWD/stub" cargo build --release --locked -p cosmic-app-list -p cosmic-applet-input-sources \
-          -p cosmic-applet-power -p cosmic-panel-button -p wlui-clipboard
+          -p cosmic-applet-power -p cosmic-panel-button -p wlui-clipboard -p wlui-dimmer
         out=${CARGO_TARGET_DIR:-target}/release
-        for bin in cosmic-app-list cosmic-applet-input-sources cosmic-applet-power cosmic-panel-button wlui-clipboard; do
+        for bin in cosmic-app-list cosmic-applet-input-sources cosmic-applet-power cosmic-panel-button wlui-clipboard wlui-dimmer; do
           install -Dm755 "$out/$bin" "/app/libexec/wlui/$bin"
         done
 
