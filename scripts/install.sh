@@ -139,8 +139,13 @@ cat > "$LAUNCHER" <<LAUNCHER
 display=\${WAYLAND_DISPLAY:-wayland-0}
 dir=\$XDG_RUNTIME_DIR/windows-like-ui
 mkdir -p "\$dir" && ln -f "\$XDG_RUNTIME_DIR/\$display" "\$dir/\$display" || exit 1
-exec flatpak run --nosocket=wayland --filesystem=xdg-run/windows-like-ui --command=sh $APP \\
-    -c "WAYLAND_DISPLAY=windows-like-ui/\$display exec wlui-clipboard"
+# At login the compositor may not be ready yet, so retry a few times.
+for i in 1 2 3 4 5 6 7 8 9 10; do
+    flatpak run --nosocket=wayland --filesystem=xdg-run/windows-like-ui --command=sh $APP \\
+        -c "WAYLAND_DISPLAY=windows-like-ui/\$display exec wlui-clipboard" && exit 0
+    sleep 3
+done
+exit 1
 LAUNCHER
 chmod +x "$LAUNCHER"
 mkdir -p "$HOME/.config/autostart"
