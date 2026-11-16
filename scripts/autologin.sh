@@ -11,11 +11,18 @@
 set -eu
 
 CONF=/etc/greetd/cosmic-greeter.toml
+# greetd's initial_session doesn't set XDG_SESSION_TYPE, so logind registers
+# the session as "tty" and the compositor can't get the GPU back after sleep
+# (screens wake up black). pam_env sets it before pam_systemd runs.
+PAM=/etc/pam.d/cosmic-greeter
+SESSION_ENV=/etc/greetd/autologin-session.env
 HERE=$(cd "$(dirname "$0")" && pwd)
 USER_NAME=$(id -un)
 
 if [ "${1:-}" = "--undo" ]; then
     sudo sed -i '/^\[initial_session\]/,$d' "$CONF"
+    sudo sed -i "\#$SESSION_ENV#d" "$PAM"
+    sudo rm -f "$SESSION_ENV"
     echo "Autologin disabled. To protect the keyring with your password again, change it in"
     echo "Passwords and Keys (seahorse) or run: $HERE/keyring-no-password and enter a new password."
     exit 0
@@ -36,6 +43,12 @@ else
     printf '\n[initial_session]\ncommand = "start-cosmic"\nuser = "%s"\n' "$USER_NAME" |
         sudo tee -a "$CONF" >/dev/null
     echo "Autologin enabled; it starts working on the next boot."
+fi
+
+if ! grep -q "$SESSION_ENV" "$PAM"; then
+    echo 'XDG_SESSION_TYPE=wayland' | sudo tee "$SESSION_ENV" >/dev/null
+    sudo sed -i "/^@include common-session/i session required pam_env.so readenv=1 envfile=$SESSION_ENV" "$PAM"
+    echo "Session type set to wayland (fixes a black screen after sleep); reboot to apply."
 fi
 
 "$HERE/keyring-no-password" || true

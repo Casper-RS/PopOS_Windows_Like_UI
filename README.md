@@ -8,7 +8,7 @@ All applets come in one Flatpak.
 
 - One bottom taskbar, no top bar
 - **Start menu** (Pop!_OS logo) in Windows 10 style: app tiles you can pin, a Most used view, an All apps list, and buttons for Task view, Settings, Lock/Log out and Power
-- **Search box** that opens a search panel right above it, with app results and your recent apps
+- **Search panel** on `Ctrl+Super+F`: a wide, high-contrast panel centered above the taskbar, with app results and your recent apps
 - **Taskbar** that shows window previews on hover, or the app name when it has no windows
 - **Keyboard layout** shown in two lines, like `EN` / `US`
 - Clean tray: Status Hub collects app tray icons, plus a system monitor, network, Bluetooth, battery (laptops only), sound, clock and notifications
@@ -16,7 +16,7 @@ All applets come in one Flatpak.
 - **Clipboard history** on `Super+V`: your last 25 copies (text and screenshots), pin the ones you want to keep
 - **Search** finds apps, settings pages and folders, grouped so you can tell them apart; `Ctrl+Super+F` opens it on the monitor you're working on
 - **Lock screen** with just your picture, name and password on a card, over your wallpaper with drifting sparks (matches [driftpaper](https://github.com/Casper-RS/driftpaper) if you use it)
-- **Fits laptops:** on screens under 1500px wide the search box shrinks to an icon, and window previews and the lock screen card stay within the screen
+- **Fits any screen:** the search panel and clipboard history scale with the monitor, and window previews and the lock screen card stay within the screen
 - Shortcuts: `Ctrl+Super+F` search, `Super+V` clipboard history, `Super+I` Settings, `Super+L` lock, `Super+Shift+L` log out
 
 ## Screenshots
@@ -52,7 +52,7 @@ All applets come in one Flatpak.
 
 - **Pin tiles:** right-click an app in Start (Most used tiles or All apps) or in the searchbar to pin or unpin it.
 - **Switch tile view:** use the dropdown above the tiles to pick Pinned or Most used.
-- **Search:** click the search box or press `Ctrl+Super+F` and type. Results are grouped into Apps, Settings and Folders; Enter opens the selected one (a settings page opens in COSMIC Settings, a folder in your file manager). Use the arrow keys to move, Esc or a click outside to close.
+- **Search:** press `Ctrl+Super+F` and type. Results are grouped into Apps, Settings and Folders; Enter opens the selected one (a settings page opens in COSMIC Settings, a folder in your file manager). Use the arrow keys to move, Esc or a click outside to close.
 - **Clipboard history:** press `Super+V`, then click an item (or use the arrow keys and Enter) to paste it into the window you were in. Pin items to keep them after logging out; Delete removes the selected item. Copies that password managers mark as secret are never recorded, and the rest is kept in memory only.
 
 ## Install

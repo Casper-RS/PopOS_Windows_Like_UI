@@ -1,0 +1,39 @@
+#!/bin/sh
+# Sets the real backlight of every DDC/CI monitor (needs ddcutil and i2c access).
+# Usage: wlui-brightness up | down | set <0-100>
+dir="${XDG_STATE_HOME:-$HOME/.local/state}/windows-like-ui"
+level_file="$dir/brightness-level"
+bus_file="$dir/brightness-buses"
+mkdir -p "$dir"
+
+buses() {
+    [ -s "$bus_file" ] || ddcutil detect --terse 2>/dev/null \
+        | sed -n 's|.*/dev/i2c-\([0-9][0-9]*\).*|\1|p' > "$bus_file"
+    cat "$bus_file"
+}
+
+current() {
+    [ -s "$level_file" ] && { cat "$level_file"; return; }
+    for b in $(buses); do
+        v=$(ddcutil --bus "$b" getvcp 10 --terse 2>/dev/null | awk '{print $4}')
+        [ -n "$v" ] && { echo "$v"; return; }
+    done
+    echo 100
+}
+
+case "$1" in
+    up) new=$(( $(current) + 10 )) ;;
+    down) new=$(( $(current) - 10 )) ;;
+    set) new="$2" ;;
+    *) echo "usage: $0 up|down|set <0-100>" >&2; exit 2 ;;
+esac
+case "$new" in ''|*[!0-9-]*) exit 2 ;; esac
+[ "$new" -gt 100 ] && new=100
+[ "$new" -lt 0 ] && new=0
+
+# A failing bus (monitor unplugged or moved) clears the list so it is detected again.
+for b in $(buses); do
+    ddcutil --bus "$b" --noverify setvcp 10 "$new" >/dev/null 2>&1 || rm -f "$bus_file" &
+done
+wait
+echo "$new" > "$level_file"

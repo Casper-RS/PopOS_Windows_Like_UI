@@ -91,7 +91,6 @@ fi
 cat > "$dock/plugins_wings" <<WINGS
 Some(([
     "$APP.Start",
-    "$APP.Search",
     "$APP.Taskbar",
 ], [
     "$APP.StatusHub",
@@ -103,6 +102,7 @@ ${battery}    "com.system76.CosmicAppletAudio",
     "$APP.Dimmer",
     "com.system76.CosmicAppletTime",
     "com.system76.CosmicAppletNotifications",
+    "$APP.Search",
 ]))
 WINGS
 
@@ -123,6 +123,12 @@ add_shortcut '(modifiers: [Super], key: "l"): System(LockScreen),'
 add_shortcut '(modifiers: [Super, Shift], key: "l"): System(LogOut),'
 add_shortcut "(modifiers: [Ctrl, Super], key: \"f\"): Spawn(\"gdbus emit --session \
 --object-path /$(echo "$APP.Search" | tr . /) --signal $APP.Search.Open\"),"
+# Real monitor brightness over DDC/CI (used by these keys and the bar's slider).
+install -D -m 755 "$HERE/scripts/wlui-brightness" "$HOME/.local/share/windows-like-ui/brightness"
+add_shortcut '(modifiers: [Super], key: "Page_Up"): Spawn("sh -c '"'"'exec sh ~/.local/share/windows-like-ui/brightness up'"'"'"),'
+add_shortcut '(modifiers: [Super], key: "Page_Down"): Spawn("sh -c '"'"'exec sh ~/.local/share/windows-like-ui/brightness down'"'"'"),'
+command -v ddcutil >/dev/null || echo "Note: brightness needs ddcutil (sudo apt install ddcutil) and i2c access:" \
+    "echo 'KERNEL==\"i2c-[0-9]*\", TAG+=\"uaccess\"' | sudo tee /etc/udev/rules.d/60-i2c-uaccess.rules"
 add_shortcut "(modifiers: [Super], key: \"v\"): Spawn(\"gdbus call --session --dest $APP.Clipboard \
 --object-path /$(echo "$APP.Clipboard" | tr . /) --method org.freedesktop.DbusActivation.ActivateAction show [] {}\"),"
 

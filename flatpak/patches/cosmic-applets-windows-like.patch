@@ -1889,7 +1889,7 @@ index 9e8e266f..4562ca5e 100644
  serde.workspace = true
 +zbus.workspace = true
 diff --git a/cosmic-panel-button/src/lib.rs b/cosmic-panel-button/src/lib.rs
-index 68c55af0..e91e9062 100644
+index 68c55af0..6da073d5 100644
 --- a/cosmic-panel-button/src/lib.rs
 +++ b/cosmic-panel-button/src/lib.rs
 @@ -15,10 +15,17 @@ use cosmic::{
@@ -1911,7 +1911,7 @@ index 68c55af0..e91e9062 100644
  
  static AUTOSIZE_MAIN_ID: LazyLock<Id> = LazyLock::new(|| Id::new("autosize-main"));
  
-@@ -33,11 +40,74 @@ struct Button {
+@@ -33,11 +40,33 @@ struct Button {
      core: cosmic::app::Core,
      desktop: Desktop,
      config: IndividualConfig,
@@ -1924,57 +1924,16 @@ index 68c55af0..e91e9062 100644
 +    caret_visible: bool,
 +    search: search::Search,
 +    focus: shortcut::Focus,
-+}
-+
+ }
+ 
 +/// Windows-style taskbar search box: started with `search` as the second
 +/// argument, the button is drawn as a rounded "Search" field.
 +static SEARCH_MODE: LazyLock<bool> =
 +    LazyLock::new(|| env::args().nth(2).is_some_and(|a| a == "search"));
 +
-+/// Screens narrower than this (logical px) get an icon-only search box.
-+const COMPACT_SEARCH_BELOW: i32 = 1500;
-+
-+fn search_box_style() -> cosmic::theme::Button {
-+    fn style(theme: &cosmic::Theme, hovered: bool, pressed: bool) -> cosmic::widget::button::Style {
-+        let c = theme.cosmic().background(theme.transparent).component.clone();
-+        let bg = if pressed {
-+            c.pressed
-+        } else if hovered {
-+            c.hover
-+        } else {
-+            c.base
-+        };
-+        // Soft divider border that picks up a hint of the accent on hover.
-+        let mut border: iced::Color = c.divider.into();
-+        if hovered {
-+            let mut accent: iced::Color = theme.cosmic().accent_color().into();
-+            accent.a = 0.55;
-+            border = accent;
-+        }
-+        let mut on: iced::Color = c.on.into();
-+        on.a *= 0.7;
-+        let mut s = cosmic::widget::button::Style::new();
-+        s.background = Some(iced::Background::Color(bg.into()));
-+        // Fully rounded pill.
-+        s.border_radius = 999.0.into();
-+        s.border_width = 1.0;
-+        s.border_color = border;
-+        s.text_color = Some(on);
-+        s.icon_color = Some(on);
-+        s
-+    }
-+    cosmic::theme::Button::Custom {
-+        active: Box::new(|_, t| style(t, false, false)),
-+        disabled: Box::new(|t| style(t, false, false)),
-+        hovered: Box::new(|_, t| style(t, true, false)),
-+        pressed: Box::new(|_, t| style(t, true, true)),
-+    }
- }
- 
  #[derive(Debug, Clone)]
  enum Msg {
      Press,
-+    ToggleSearch,
 +    ShortcutPressed,
 +    OutputSeen(String, WlOutput),
 +    BlinkCaret,
@@ -1986,7 +1945,7 @@ index 68c55af0..e91e9062 100644
      ConfigUpdated(CosmicPanelButtonConfig),
      Surface(surface::Action<Msg>),
  }
-@@ -103,6 +173,11 @@ impl cosmic::Application for Button {
+@@ -103,6 +132,11 @@ impl cosmic::Application for Button {
                  core,
                  desktop,
                  config,
@@ -1998,7 +1957,7 @@ index 68c55af0..e91e9062 100644
              },
              Task::none(),
          )
-@@ -123,15 +198,7 @@ impl cosmic::Application for Button {
+@@ -123,15 +157,7 @@ impl cosmic::Application for Button {
      fn update(&mut self, message: Msg) -> app::Task<Msg> {
          match message {
              Msg::Press => {
@@ -2015,16 +1974,10 @@ index 68c55af0..e91e9062 100644
              }
              Msg::ConfigUpdated(conf) => {
                  self.config = conf
-@@ -143,11 +210,249 @@ impl cosmic::Application for Button {
+@@ -143,11 +169,139 @@ impl cosmic::Application for Button {
              Msg::Surface(a) => {
                  return cosmic::task::message(cosmic::Action::Surface(a));
              }
-+            Msg::ToggleSearch => {
-+                if self.popup.is_some() {
-+                    return self.close_search();
-+                }
-+                return self.open_search();
-+            }
 +            Msg::OutputSeen(name, output) => {
 +                if name == self.core.applet.output_name {
 +                    self.output = Some(output);
@@ -2088,49 +2041,55 @@ index 68c55af0..e91e9062 100644
  
 +    fn view_window(&self, id: iced::window::Id) -> cosmic::Element<'_, Msg> {
 +        if self.popup == Some(id) {
-+            let panel = cosmic::widget::container(self.search.view().map(Msg::Search))
-+                .max_height(620.0)
++            // The layer covers the whole monitor, panel included, so any click
++            // outside the results closes them; the results sit centered just
++            // above the panel. Sizes follow the monitor's logical size.
++            let gap = f32::from(cosmic::theme::active().cosmic().spacing.space_xs);
++            let edge = self.panel_thickness() + gap;
++            let top = self.core.applet.anchor == PanelAnchor::Top;
++            let padding = if top {
++                iced::Padding { top: edge, ..Default::default() }
++            } else {
++                iced::Padding { bottom: edge, ..Default::default() }
++            };
++            let caret = self.caret_visible;
++            return iced::widget::responsive(move |size| {
++                let panel = cosmic::widget::container(
++                    self.search.view(caret, size.width, size.height).map(Msg::Search),
++                )
++                .max_height(size.height - 2.0 * edge)
 +                .class(cosmic::theme::Container::custom(|theme| {
 +                    let cosmic = theme.cosmic();
 +                    cosmic::iced::widget::container::Style {
 +                        text_color: Some(cosmic.background(false).on.into()),
 +                        icon_color: Some(cosmic.background(false).on.into()),
 +                        background: Some(iced::Color::from(cosmic.background(false).base).into()),
++                        // Accent outline and a deep shadow set the panel off
++                        // from whatever is behind it.
 +                        border: iced::Border {
 +                            radius: cosmic.corner_radii.radius_m.into(),
-+                            width: 1.0,
-+                            color: cosmic.background(false).divider.into(),
++                            width: 2.0,
++                            color: cosmic.accent_color().into(),
 +                        },
 +                        shadow: iced::Shadow {
-+                            color: iced::Color::from_rgba(0.0, 0.0, 0.0, 0.35),
-+                            offset: iced::Vector::new(0.0, 4.0),
-+                            blur_radius: 16.0,
++                            color: iced::Color::from_rgba(0.0, 0.0, 0.0, 0.6),
++                            offset: iced::Vector::new(0.0, 8.0),
++                            blur_radius: 32.0,
 +                        },
 +                        ..Default::default()
 +                    }
 +                }));
-+            // The layer covers the whole monitor, panel included, so any click
-+            // outside the results closes them; the results sit just above the
-+            // panel at the left, like on Windows.
-+            let gap = f32::from(cosmic::theme::active().cosmic().spacing.space_xs);
-+            let edge = self.panel_thickness() + gap;
-+            let padding = match self.core.applet.anchor {
-+                PanelAnchor::Top => iced::Padding { top: edge, left: gap, ..Default::default() },
-+                _ => iced::Padding { bottom: edge, left: gap, ..Default::default() },
-+            };
-+            return cosmic::widget::mouse_area(
-+                cosmic::widget::container(cosmic::widget::mouse_area(panel).on_press(Msg::Noop))
-+                    .width(Length::Fill)
-+                    .height(Length::Fill)
-+                    .align_x(iced::Alignment::Start)
-+                    .align_y(if self.core.applet.anchor == PanelAnchor::Top {
-+                        iced::Alignment::Start
-+                    } else {
-+                        iced::Alignment::End
-+                    })
-+                    .padding(padding),
-+            )
-+            .on_press(Msg::Escape)
++                cosmic::widget::mouse_area(
++                    cosmic::widget::container(cosmic::widget::mouse_area(panel).on_press(Msg::Noop))
++                        .width(Length::Fill)
++                        .height(Length::Fill)
++                        .align_x(iced::Alignment::Center)
++                        .align_y(if top { iced::Alignment::Start } else { iced::Alignment::End })
++                        .padding(padding),
++                )
++                .on_press(Msg::Escape)
++                .into()
++            })
 +            .into();
 +        }
 +        cosmic::widget::text("").into()
@@ -2141,123 +2100,13 @@ index 68c55af0..e91e9062 100644
 +    }
 +
      fn view(&self) -> cosmic::Element<'_, Msg> {
-+        if *SEARCH_MODE && self.core.applet.is_horizontal() {
-+            let suggested = self.core.applet.suggested_size(true);
-+            let (_, minor_pad) = self.core.applet.suggested_padding(true);
-+            let outer_h = f32::from(suggested.1 + 2 * minor_pad);
-+            // Scale with the panel size; tuned for the M (28px icon) size.
-+            let k = f32::from(suggested.1) / 28.0;
-+            let px = |v: f32| (v * k).round();
-+            // The box is the search field: it shows what is typed into the
-+            // open popup, keeping only the end of a long query.
-+            let typing = self.popup.is_some();
-+            let caret = typing && self.caret_visible;
-+            let placeholder = self.search.query.is_empty();
-+            // On narrow screens the box is just a search icon until you type.
-+            let compact = !typing
-+                && self
-+                    .focus
-+                    .screen_width(&self.core.applet.output_name)
-+                    .is_some_and(|w| w < COMPACT_SEARCH_BELOW);
-+            // While open, the caret takes the place of the placeholder.
-+            let query = if placeholder && typing {
-+                String::new()
-+            } else if placeholder {
-+                "Search...".to_string()
-+            } else {
-+                let chars: Vec<char> = self.search.query.chars().collect();
-+                match chars.len().checked_sub(22) {
-+                    Some(skip) if skip > 0 => {
-+                        format!("…{}", chars[skip + 1..].iter().collect::<String>())
-+                    }
-+                    _ => self.search.query.clone(),
-+                }
-+            };
-+            let pill = cosmic::widget::button::custom(
-+                cosmic::widget::container(
-+                    row!(
-+                        cosmic::widget::icon::from_name("system-search-symbolic")
-+                            .size(px(20.0) as u16)
-+                            .icon()
-+                            .class(cosmic::theme::Svg::Custom(std::rc::Rc::new(|theme| {
-+                                let mut c: iced::Color = theme
-+                                    .cosmic()
-+                                    .background(theme.transparent)
-+                                    .component
-+                                    .on
-+                                    .into();
-+                                c.a *= 0.7;
-+                                cosmic::iced::widget::svg::Style { color: Some(c) }
-+                            }))),
-+                        // Dimmed like an input placeholder. The invisible longer
-+                        // text keeps the box at a comfortable width.
-+                        (!compact).then(|| cosmic::iced::widget::stack![
-+                            cosmic::widget::text::body("Search anything...").size(px(14.0)).class(
-+                                cosmic::theme::Text::Custom(|_| {
-+                                    cosmic::iced::widget::text::Style {
-+                                        color: Some(iced::Color::TRANSPARENT),
-+                                        ..Default::default()
-+                                    }
-+                                })
-+                            ),
-+                            row!(
-+                                cosmic::widget::text::body(query).size(px(16.0)).class(
-+                                    if placeholder {
-+                                        cosmic::theme::Text::Custom(|theme| {
-+                                            let mut c: iced::Color = theme
-+                                                .cosmic()
-+                                                .background(theme.transparent)
-+                                                .component
-+                                                .on
-+                                                .into();
-+                                            c.a *= 0.7;
-+                                            cosmic::iced::widget::text::Style {
-+                                                color: Some(c),
-+                                                ..Default::default()
-+                                            }
-+                                        })
-+                                    } else {
-+                                        cosmic::theme::Text::Default
-+                                    }
-+                                ),
-+                                // Caret while the popup is taking the keystrokes.
-+                                cosmic::widget::container(cosmic::widget::Space::new())
-+                                    .width(Length::Fixed(if typing { 2.0 } else { 0.0 }))
-+                                    .height(Length::Fixed(px(18.0)))
-+                                    .class(cosmic::theme::Container::custom(move |theme| {
-+                                        cosmic::iced::widget::container::Style {
-+                                            background: caret.then(|| {
-+                                                iced::Background::Color(
-+                                                    theme.cosmic().accent_color().into(),
-+                                                )
-+                                            }),
-+                                            ..Default::default()
-+                                        }
-+                                    })),
-+                            )
-+                            .spacing(if typing && !placeholder { 1.0 } else { 0.0 })
-+                            .align_y(iced::Alignment::Center),
-+                        ]),
-+                    )
-+                    .spacing(px(8.0))
-+                    .align_y(iced::Alignment::Center),
-+                )
-+                .center_y(Length::Fill),
-+            )
-+            .padding(if compact {
-+                [0.0, px(14.0), 0.0, px(14.0)]
-+            } else {
-+                [0.0, px(22.0), 0.0, px(14.0)]
-+            })
-+            .width(Length::Shrink)
-+            .height(Length::Fixed((outer_h - px(12.0)).max(20.0)))
-+            .class(search_box_style())
-+            .on_press_down(Msg::ToggleSearch);
++        if *SEARCH_MODE {
++            // No search box on the bar any more: this instance only hosts the
++            // Ctrl+Super+F popup, so it draws nothing.
 +            return autosize::autosize(
-+                cosmic::widget::container(pill)
-+                    .padding([0, 6])
-+                    .height(Length::Fixed(outer_h))
-+                    .center_y(Length::Fixed(outer_h)),
++                cosmic::widget::container(cosmic::widget::Space::new())
++                    .width(Length::Fixed(1.0))
++                    .height(Length::Fixed(1.0)),
 +                AUTOSIZE_MAIN_ID.clone(),
 +            )
 +            .into();
@@ -2265,7 +2114,7 @@ index 68c55af0..e91e9062 100644
          // currently, panel being anchored to the left or right is a hard
          // override for icon, later if text is updated to wrap, we may
          // use Override::Text to override this behavior
-@@ -201,15 +506,138 @@ impl cosmic::Application for Button {
+@@ -201,15 +355,138 @@ impl cosmic::Application for Button {
      }
  
      fn subscription(&self) -> iced::Subscription<Self::Message> {
@@ -2405,7 +2254,7 @@ index 68c55af0..e91e9062 100644
  pub fn run() -> iced::Result {
      let id = env::args()
          .nth(1)
-@@ -242,3 +670,39 @@ pub fn run() -> iced::Result {
+@@ -242,3 +519,39 @@ pub fn run() -> iced::Result {
      });
      cosmic::applet::run::<Button>(desktop)
  }
@@ -2447,10 +2296,10 @@ index 68c55af0..e91e9062 100644
 +}
 diff --git a/cosmic-panel-button/src/search.rs b/cosmic-panel-button/src/search.rs
 new file mode 100644
-index 00000000..43889b9c
+index 00000000..4efb6144
 --- /dev/null
 +++ b/cosmic-panel-button/src/search.rs
-@@ -0,0 +1,593 @@
+@@ -0,0 +1,644 @@
 +// SPDX-License-Identifier: GPL-3.0-only
 +
 +//! Windows-style search popup for the taskbar search box: apps, settings
@@ -2473,9 +2322,14 @@ index 00000000..43889b9c
 +const MAX_SETTINGS: usize = 2;
 +const MAX_FOLDERS: usize = 3;
 +const MAX_RECENT_APPS: usize = 6;
-+/// The result list shows about five rows and scrolls for the rest, so the
-+/// panel also fits on small laptop screens.
-+const LIST_MAX_HEIGHT: f32 = 250.0;
++/// The panel is this share of the screen, within these bounds (logical px),
++/// so it stays readable on big monitors and fits small laptop screens.
++const WIDTH_SHARE: f32 = 0.42;
++const MIN_WIDTH: f32 = 420.0;
++const MAX_WIDTH: f32 = 820.0;
++const LIST_HEIGHT_SHARE: f32 = 0.4;
++const MIN_LIST_HEIGHT: f32 = 220.0;
++const MAX_LIST_HEIGHT: f32 = 560.0;
 +
 +pub static RESULTS_ID: std::sync::LazyLock<widget::Id> =
 +    std::sync::LazyLock::new(|| widget::Id::new("search-results"));
@@ -2770,19 +2624,16 @@ index 00000000..43889b9c
 +        let _ = fs::write(path, out);
 +    }
 +
-+    pub fn view(&self) -> Element<'_, SearchMsg> {
++    pub fn view(&self, caret: bool, screen_w: f32, screen_h: f32) -> Element<'_, SearchMsg> {
 +        let spacing = theme::active().cosmic().spacing;
 +        let mut list = column::with_capacity(16).spacing(2);
 +
 +        let heading = |label: &'static str| {
-+            text::caption_heading(label)
++            text::caption_heading(label).size(14.0)
 +                .apply_padding([spacing.space_xxs, spacing.space_s])
 +        };
 +
 +        if self.query.trim().is_empty() {
-+            if self.recent_apps.is_empty() {
-+                list = list.push(heading("Type to search apps, settings and folders"));
-+            }
 +            if !self.recent_apps.is_empty() {
 +                list = list.push(heading("Recent"));
 +                for (n, id) in self.recent_apps.iter().enumerate() {
@@ -2820,7 +2671,7 @@ index 00000000..43889b9c
 +                        )
 +                    }
 +                    Hit::Setting(i) => labeled_row(
-+                        icon::from_name("preferences-system-symbolic").size(20).into(),
++                        icon::from_name("preferences-system-symbolic").size(28).into(),
 +                        SETTINGS[*i].1.to_string(),
 +                        "Settings".to_string(),
 +                        selected,
@@ -2828,7 +2679,7 @@ index 00000000..43889b9c
 +                    .on_press(SearchMsg::Open(n))
 +                    .into(),
 +                    Hit::Folder(path) => labeled_row(
-+                        icon::from_name("folder").size(28).into(),
++                        icon::from_name("folder").size(32).into(),
 +                        folder_name(path),
 +                        display_path(path),
 +                        selected,
@@ -2841,14 +2692,14 @@ index 00000000..43889b9c
 +
 +        let mut footer = column::with_capacity(2).spacing(2);
 +        footer = footer.push(
-+            text::caption("Right-click an app to pin it to Start")
++            text::caption("Right-click an app to pin it to Start").size(13.0)
 +                .apply_padding([spacing.space_xxs, spacing.space_s]),
 +        );
 +        footer = footer.push(
 +            menu_button(
 +                row![
 +                    icon::from_name("system-search-symbolic").size(16),
-+                    text::body("Search files and more in the launcher"),
++                    text::body("Search files and more in the launcher").size(16.0),
 +                ]
 +                .spacing(spacing.space_s)
 +                .align_y(Alignment::Center),
@@ -2859,16 +2710,65 @@ index 00000000..43889b9c
 +        let list = widget::container(
 +            widget::scrollable(list).id(RESULTS_ID.clone()).height(Length::Shrink),
 +        )
-+        .max_height(LIST_MAX_HEIGHT);
-+        column![list, footer]
-+            .spacing(spacing.space_xxs)
-+            .padding([spacing.space_xs, 0])
-+            .width(Length::Fixed(440.0))
++        .max_height((screen_h * LIST_HEIGHT_SHARE).clamp(MIN_LIST_HEIGHT, MAX_LIST_HEIGHT));
++        column![self.query_field(caret), list, footer]
++            .spacing(spacing.space_xs)
++            .padding(spacing.space_s)
++            .width(Length::Fixed((screen_w * WIDTH_SHARE).clamp(MIN_WIDTH, MAX_WIDTH)))
 +            .into()
 +    }
 +}
 +
 +impl Search {
++    /// The typed query with a caret, drawn at the top of the panel (the popup
++    /// has no real text input; it takes the keystrokes itself).
++    fn query_field(&self, caret: bool) -> Element<'_, SearchMsg> {
++        let spacing = theme::active().cosmic().spacing;
++        let empty = self.query.is_empty();
++        let shown = if empty {
++            text::body("Type to search apps, settings and folders")
++                .size(18.0)
++                .class(theme::Text::Custom(|theme| {
++                    let mut c: cosmic::iced::Color =
++                        theme.cosmic().background(false).on.into();
++                    c.a *= 0.6;
++                    cosmic::iced::widget::text::Style { color: Some(c), ..Default::default() }
++                }))
++        } else {
++            text::body(self.query.as_str()).size(20.0)
++        };
++        let caret_bar = widget::container(widget::Space::new())
++            .width(Length::Fixed(2.0))
++            .height(Length::Fixed(24.0))
++            .class(theme::Container::custom(move |theme| widget::container::Style {
++                background: caret
++                    .then(|| cosmic::iced::Background::Color(theme.cosmic().accent_color().into())),
++                ..Default::default()
++            }));
++        widget::container(
++            row![icon::from_name("system-search-symbolic").size(24), caret_bar, shown]
++                .spacing(spacing.space_s)
++                .align_y(Alignment::Center),
++        )
++        .padding([spacing.space_s, spacing.space_m])
++        .width(Length::Fill)
++        .class(theme::Container::custom(|theme| {
++            let cosmic = theme.cosmic();
++            widget::container::Style {
++                background: Some(
++                    cosmic::iced::Color::from(cosmic.background(false).component.base).into(),
++                ),
++                border: cosmic::iced::Border {
++                    radius: cosmic.corner_radii.radius_s.into(),
++                    width: 1.0,
++                    color: cosmic.accent_color().into(),
++                },
++                ..Default::default()
++            }
++        }))
++        .into()
++    }
++
 +    /// Right-click pins the app to Start, or unpins it.
 +    fn pinnable<'a>(
 +        &self,
@@ -2982,10 +2882,10 @@ index 00000000..43889b9c
 +    let spacing = theme::active().cosmic().spacing;
 +    menu_button(
 +        row![
-+            widget::container(icon).width(28).center_x(28),
-+            text::body(name),
++            widget::container(icon).width(32).center_x(32),
++            text::body(name).size(17.0),
 +            widget::space::horizontal().width(Length::Fill),
-+            text::caption(kind),
++            text::caption(kind).size(14.0),
 +        ]
 +        .spacing(spacing.space_s)
 +        .align_y(Alignment::Center),
@@ -3002,8 +2902,8 @@ index 00000000..43889b9c
 +    };
 +    menu_button(
 +        row![
-+            icon(app.icon.as_cosmic_icon()).size(28),
-+            text::body(app.name.as_str()),
++            icon(app.icon.as_cosmic_icon()).size(32),
++            text::body(app.name.as_str()).size(17.0),
 +            widget::space::horizontal().width(Length::Fill),
 +            pin,
 +        ]
@@ -3046,10 +2946,10 @@ index 00000000..43889b9c
 +}
 diff --git a/cosmic-panel-button/src/shortcut.rs b/cosmic-panel-button/src/shortcut.rs
 new file mode 100644
-index 00000000..ddffb524
+index 00000000..e3a4aaa5
 --- /dev/null
 +++ b/cosmic-panel-button/src/shortcut.rs
-@@ -0,0 +1,192 @@
+@@ -0,0 +1,178 @@
 +//! Keyboard shortcut for the search box: the shortcut emits a D-Bus signal that
 +//! every search box hears, and only the one on the monitor with the focused
 +//! window opens.
@@ -3119,8 +3019,6 @@ index 00000000..ddffb524
 +    focused: Option<String>,
 +    /// Top-left monitor, used while no window has focus.
 +    first: Option<String>,
-+    /// Logical width of each monitor, by name.
-+    widths: Vec<(String, i32)>,
 +}
 +
 +/// Knows which monitor the search box should open on.
@@ -3146,12 +3044,6 @@ index 00000000..ddffb524
 +            }
 +        });
 +        focus
-+    }
-+
-+    /// Logical width of the named monitor, once known.
-+    pub fn screen_width(&self, output: &str) -> Option<i32> {
-+        let monitors = self.0.lock().unwrap();
-+        monitors.widths.iter().find(|(name, _)| name == output).map(|(_, w)| *w)
 +    }
 +
 +    pub fn opens_on(&self, output: &str) -> bool {
@@ -3187,13 +3079,7 @@ index 00000000..ddffb524
 +            .filter_map(|o| self.output_state.info(&o))
 +            .min_by_key(|info| info.logical_position.map_or((0, 0), |(x, y)| (y, x)))
 +            .and_then(|info| info.name);
-+        let widths = self
-+            .output_state
-+            .outputs()
-+            .filter_map(|o| self.output_state.info(&o))
-+            .filter_map(|info| Some((info.name?, info.logical_size?.0)))
-+            .collect();
-+        *self.monitors.lock().unwrap() = Monitors { focused, first, widths };
++        *self.monitors.lock().unwrap() = Monitors { focused, first };
 +    }
 +}
 +
@@ -3269,10 +3155,10 @@ index 00000000..73f7aab5
 +wayland-protocols-misc = { version = "0.3", features = ["client"] }
 diff --git a/wlui-clipboard/src/main.rs b/wlui-clipboard/src/main.rs
 new file mode 100644
-index 00000000..ca3c2b96
+index 00000000..8cf6e0be
 --- /dev/null
 +++ b/wlui-clipboard/src/main.rs
-@@ -0,0 +1,507 @@
+@@ -0,0 +1,513 @@
 +// SPDX-License-Identifier: GPL-3.0-only
 +
 +//! Windows-style clipboard history. Runs in the background from login and
@@ -3487,7 +3373,13 @@ index 00000000..ca3c2b96
 +        store::save_pinned(&pinned);
 +    }
 +
++    /// Sizes follow the monitor's logical size: wider on big screens, and never
++    /// taller than the screen on small ones.
 +    fn panel(&self) -> Element<'_, Message> {
++        cosmic::iced::widget::responsive(move |size| self.panel_sized(size.width, size.height)).into()
++    }
++
++    fn panel_sized(&self, screen_w: f32, screen_h: f32) -> Element<'_, Message> {
 +        let spacing = theme::active().cosmic().spacing;
 +
 +        let header = row![
@@ -3522,8 +3414,8 @@ index 00000000..ca3c2b96
 +
 +        let panel = widget::container(column![header, body].spacing(spacing.space_s))
 +            .padding(spacing.space_s)
-+            .width(Length::Fixed(PANEL_WIDTH))
-+            .max_height(PANEL_MAX_HEIGHT)
++            .width(Length::Fixed((screen_w * 0.2).clamp(PANEL_WIDTH.min(screen_w - 24.0), 560.0)))
++            .max_height(PANEL_MAX_HEIGHT.min(screen_h * 0.85))
 +            .class(theme::Container::custom(|theme| {
 +                let cosmic = theme.cosmic();
 +                widget::container::Style {
@@ -4307,18 +4199,17 @@ index 00000000..31e2dd2a
 +delegate_noop!(State: ignore ZwpVirtualKeyboardV1);
 diff --git a/wlui-dimmer/Cargo.toml b/wlui-dimmer/Cargo.toml
 new file mode 100644
-index 00000000..61556fc1
+index 00000000..4209ad7d
 --- /dev/null
 +++ b/wlui-dimmer/Cargo.toml
-@@ -0,0 +1,13 @@
+@@ -0,0 +1,12 @@
 +[package]
 +name = "wlui-dimmer"
 +version = "0.1.0"
 +edition = "2024"
 +license = "GPL-3.0-only"
 +
-+# Panel button with a brightness slider that dims the screen with a
-+# click-through black layer (for monitors without a backlight).
++# Panel button with a slider for the real monitor brightness (DDC/CI).
 +
 +[dependencies]
 +libcosmic.workspace = true
@@ -4326,53 +4217,45 @@ index 00000000..61556fc1
 +tracing-subscriber.workspace = true
 diff --git a/wlui-dimmer/src/main.rs b/wlui-dimmer/src/main.rs
 new file mode 100644
-index 00000000..c3059246
+index 00000000..f6fa75b7
 --- /dev/null
 +++ b/wlui-dimmer/src/main.rs
-@@ -0,0 +1,254 @@
+@@ -0,0 +1,186 @@
 +// SPDX-License-Identifier: GPL-3.0-only
 +
-+//! Brightness dimmer for the taskbar. The button opens a slider; below 100%
-+//! a black, click-through layer covers this panel's monitor. The level is
-+//! shared between monitors through a small state file.
++//! Brightness control for the taskbar. The button opens a slider that sets the
++//! real backlight of the monitors over DDC/CI, through the host's
++//! `wlui-brightness` script (ddcutil needs the host's i2c devices).
 +
 +use cosmic::{
 +    Element, app,
 +    app::Core,
 +    applet,
-+    cctk::wayland_client::protocol::wl_output::WlOutput,
 +    iced::{
 +        self, Alignment, Length, Subscription, Task,
-+        event::wayland::{Event as WaylandEvent, OutputEvent},
-+        platform_specific::{
-+            runtime::wayland::layer_surface::{IcedMargin, IcedOutput, SctkLayerSurfaceSettings},
-+            shell::commands::{
-+                layer_surface::{
-+                    Anchor, KeyboardInteractivity, Layer, destroy_layer_surface, get_layer_surface,
-+                },
-+                popup::{destroy_popup, get_popup},
-+            },
-+        },
++        platform_specific::shell::commands::popup::{destroy_popup, get_popup},
 +        window::Id,
 +    },
 +    theme,
 +    widget::{self, autosize, slider},
 +};
-+use std::{fs, path::PathBuf, sync::LazyLock, time::Duration};
++use std::{fs, path::PathBuf, process::Command, sync::LazyLock, time::Duration};
 +
 +const APP_ID: &str = "io.github.casper_rs.PopOSWindowsLikeUI.Dimmer";
-+/// Lowest brightness: the screen never goes fully black.
-+const MIN: u8 = 20;
++const MIN: u8 = 0;
 +const MAX: u8 = 100;
 +
 +static AUTOSIZE_MAIN_ID: LazyLock<widget::Id> = LazyLock::new(|| widget::Id::new("autosize-main"));
 +
++/// The host script keeps the level in the real home, not the Flatpak state dir.
 +fn level_file() -> PathBuf {
-+    let state = std::env::var_os("XDG_STATE_HOME")
-+        .map(PathBuf::from)
-+        .or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".local/state")))
-+        .unwrap_or_default();
-+    state.join("windows-like-ui/dim-level")
++    let home = std::env::var_os("HOME").map(PathBuf::from).unwrap_or_default();
++    home.join(".local/state/windows-like-ui/brightness-level")
++}
++
++fn script() -> PathBuf {
++    let home = std::env::var_os("HOME").map(PathBuf::from).unwrap_or_default();
++    home.join(".local/share/windows-like-ui/brightness")
 +}
 +
 +fn load_level() -> u8 {
@@ -4382,12 +4265,17 @@ index 00000000..c3059246
 +        .map_or(MAX, |v| v.clamp(MIN, MAX))
 +}
 +
-+fn save_level(level: u8) {
-+    let path = level_file();
-+    if let Some(dir) = path.parent() {
-+        let _ = fs::create_dir_all(dir);
-+    }
-+    let _ = fs::write(path, level.to_string());
++/// Apply the level to the monitors; it takes a moment, so not on the UI thread.
++fn apply_level(level: u8) {
++    std::thread::spawn(move || {
++        let _ = Command::new("flatpak-spawn")
++            .arg("--host")
++            .arg("sh")
++            .arg(script())
++            .arg("set")
++            .arg(level.to_string())
++            .status();
++    });
 +}
 +
 +fn main() -> iced::Result {
@@ -4400,50 +4288,19 @@ index 00000000..c3059246
 +    /// Brightness in percent, MIN..=MAX.
 +    level: u8,
 +    popup: Option<Id>,
-+    /// The monitor this panel is on.
-+    output: Option<WlOutput>,
-+    overlay: Option<Id>,
++    /// The slider is being dragged.
++    dragging: bool,
 +}
 +
 +#[derive(Debug, Clone)]
 +enum Message {
 +    TogglePopup,
 +    PopupClosed(Id),
++    /// The slider moved: only shown, the monitors are set on release.
 +    SetLevel(u8),
-+    /// Pick up a level changed by the instance on another monitor.
++    Released,
++    /// Pick up a level changed by a keyboard shortcut.
 +    Reload,
-+    OutputSeen(String, WlOutput),
-+}
-+
-+impl Dimmer {
-+    /// Show the dimming layer exactly when the level is below 100%.
-+    fn sync_overlay(&mut self) -> app::Task<Message> {
-+        match (self.level < MAX, self.overlay, &self.output) {
-+            (true, None, Some(output)) => {
-+                let id = Id::unique();
-+                self.overlay = Some(id);
-+                get_layer_surface(SctkLayerSurfaceSettings {
-+                    id,
-+                    layer: Layer::Overlay,
-+                    keyboard_interactivity: KeyboardInteractivity::None,
-+                    // An empty input region: every click goes to the window below.
-+                    input_zone: Some(Vec::new()),
-+                    anchor: Anchor::all(),
-+                    output: IcedOutput::Output(output.clone()),
-+                    namespace: "wlui-dimmer".into(),
-+                    size: Some((None, None)),
-+                    margin: IcedMargin::default(),
-+                    exclusive_zone: -1,
-+                    size_limits: iced::Limits::NONE,
-+                })
-+            }
-+            (false, Some(id), _) => {
-+                self.overlay = None;
-+                destroy_layer_surface(id)
-+            }
-+            _ => Task::none(),
-+        }
-+    }
 +}
 +
 +impl cosmic::Application for Dimmer {
@@ -4465,8 +4322,7 @@ index 00000000..c3059246
 +            core,
 +            level: load_level(),
 +            popup: None,
-+            output: None,
-+            overlay: None,
++            dragging: false,
 +        };
 +        (dimmer, Task::none())
 +    }
@@ -4503,23 +4359,15 @@ index 00000000..c3059246
 +            }
 +            Message::SetLevel(level) => {
 +                self.level = level.clamp(MIN, MAX);
-+                save_level(self.level);
-+                return self.sync_overlay();
++                self.dragging = true;
++            }
++            Message::Released => {
++                self.dragging = false;
++                apply_level(self.level);
 +            }
 +            Message::Reload => {
-+                // The instance being dragged owns the level meanwhile.
-+                if self.popup.is_none() {
-+                    let level = load_level();
-+                    if level != self.level {
-+                        self.level = level;
-+                        return self.sync_overlay();
-+                    }
-+                }
-+            }
-+            Message::OutputSeen(name, output) => {
-+                if name == self.core.applet.output_name {
-+                    self.output = Some(output);
-+                    return self.sync_overlay();
++                if !self.dragging {
++                    self.level = load_level();
 +                }
 +            }
 +        }
@@ -4537,23 +4385,13 @@ index 00000000..c3059246
 +        .into()
 +    }
 +
-+    fn view_window(&self, id: Id) -> Element<'_, Message> {
-+        if self.overlay == Some(id) {
-+            let alpha = f32::from(MAX - self.level) / 100.0;
-+            return widget::container(widget::Space::new())
-+                .width(Length::Fill)
-+                .height(Length::Fill)
-+                .class(theme::Container::custom(move |_| widget::container::Style {
-+                    background: Some(iced::Color::from_rgba(0.0, 0.0, 0.0, alpha).into()),
-+                    ..Default::default()
-+                }))
-+                .into();
-+        }
++    fn view_window(&self, _id: Id) -> Element<'_, Message> {
 +        let space_s = theme::active().cosmic().spacing.space_s;
 +        let row = widget::row::with_capacity(3)
 +            .push(widget::icon::from_name("display-brightness-symbolic").size(24).symbolic(true))
 +            .push(
 +                slider(MIN..=MAX, self.level, Message::SetLevel)
++                    .on_release(Message::Released)
 +                    .width(Length::Fixed(180.0)),
 +            )
 +            .push(widget::text(format!("{}%", self.level)).size(16).width(Length::Fixed(44.0)))
@@ -4566,21 +4404,6 @@ index 00000000..c3059246
 +    }
 +
 +    fn subscription(&self) -> Subscription<Message> {
-+        Subscription::batch([
-+            iced::time::every(Duration::from_secs(1)).map(|_| Message::Reload),
-+            iced::event::listen_with(|event, _, _| {
-+                let iced::Event::PlatformSpecific(iced::event::PlatformSpecific::Wayland(
-+                    WaylandEvent::Output(event, output),
-+                )) = event
-+                else {
-+                    return None;
-+                };
-+                let (OutputEvent::Created(Some(info)) | OutputEvent::InfoUpdate(info)) = event
-+                else {
-+                    return None;
-+                };
-+                Some(Message::OutputSeen(info.name?, output))
-+            }),
-+        ])
++        iced::time::every(Duration::from_secs(1)).map(|_| Message::Reload)
 +    }
 +}
