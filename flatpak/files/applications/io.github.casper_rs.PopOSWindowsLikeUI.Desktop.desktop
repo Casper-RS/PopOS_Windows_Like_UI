@@ -1,0 +1,12 @@
+[Desktop Entry]
+Type=Application
+Terminal=false
+NoDisplay=true
+Categories=COSMIC;
+X-CosmicApplet=true
+Name=Show desktop (Windows-like)
+Comment=Minimizes all windows; press again to restore them
+Exec=wlui-desktop
+Icon=user-desktop-symbolic
+X-OverflowPriority=10
+X-HostWaylandDisplay=true

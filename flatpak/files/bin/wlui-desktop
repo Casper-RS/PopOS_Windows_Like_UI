@@ -1,0 +1,5 @@
+#!/bin/sh
+# The taskbar applet in its "Show desktop" mode: only the thin strip.
+. /app/bin/wlui-env
+export WLUI_DESKTOP_BUTTON=1
+exec /app/libexec/wlui/cosmic-app-list "$@"

@@ -1,0 +1,12 @@
+[Desktop Entry]
+Type=Application
+Terminal=false
+NoDisplay=true
+Categories=COSMIC;
+X-CosmicApplet=true
+Name=Clock and quick settings (Windows-like)
+Comment=Clock with a flyout for Wi-Fi, Bluetooth, sound, brightness and a calendar
+Exec=wlui-flyout
+Icon=preferences-system-time-symbolic
+X-CosmicHoverPopup=Auto
+X-OverflowPriority=10
