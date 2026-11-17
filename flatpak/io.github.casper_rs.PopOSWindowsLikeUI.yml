@@ -80,10 +80,14 @@ modules:
     sources:
       - type: git
         url: https://github.com/marcelogomes90/cosmic-ext-applet-status-hub.git
-        commit: d09f89256c254310a660d84780bba9b8a75b23be
+        commit: 2a0cb426179a7729b407b0f47e7f012ccb14274e
     build-commands:
-      - cargo build --release --locked
-      - install -Dm755 target/release/cosmic-ext-applet-status-hub /app/libexec/wlui/cosmic-ext-applet-status-hub
+      - |
+        if [ -w /run/ccache ]; then
+          export CARGO_HOME=/run/ccache/cargo-home CARGO_TARGET_DIR=/run/ccache/cargo-target-status-hub
+        fi
+        cargo build --release --locked
+        install -Dm755 ${CARGO_TARGET_DIR:-target}/release/cosmic-ext-applet-status-hub /app/libexec/wlui/cosmic-ext-applet-status-hub
       - install -Dm644 resources/io.github.marcelogomes90.cosmic-ext-applet-status-hub-symbolic.svg
         /app/share/icons/hicolor/scalable/apps/io.github.marcelogomes90.cosmic-ext-applet-status-hub-symbolic.svg
 
@@ -97,8 +101,12 @@ modules:
         url: https://github.com/Casper-RS/PopOS_Cosmic-DE_System_Analysis.git
         commit: ba2b63841a2bd7774100526e8b05c8085227ec6d
     build-commands:
-      - cargo build --release --locked
-      - install -Dm755 target/release/cosmic-ext-applet-system-monitor /app/libexec/wlui/cosmic-ext-applet-system-monitor
+      - |
+        if [ -w /run/ccache ]; then
+          export CARGO_HOME=/run/ccache/cargo-home CARGO_TARGET_DIR=/run/ccache/cargo-target-system-monitor
+        fi
+        cargo build --release --locked
+        install -Dm755 ${CARGO_TARGET_DIR:-target}/release/cosmic-ext-applet-system-monitor /app/libexec/wlui/cosmic-ext-applet-system-monitor
       - install -Dm644 res/dev.DBrox.CosmicSystemMonitor.svg /app/share/icons/hicolor/scalable/apps/dev.DBrox.CosmicSystemMonitor.svg
 
   - name: windows-like-ui

@@ -6,6 +6,12 @@
 #   ./scripts/install.sh --build         build from source with flatpak-builder
 #   ./scripts/install.sh --layout-only   only apply the panel layout and shortcuts
 #
+# Layout and search style (remembered for the next run; combine with any option above):
+#   --layout windows|mac    windows: one bottom taskbar (default)
+#                           mac: centered Start + taskbar dock, system applets in a slim top bar
+#   --search box|shortcut   box: search box on the taskbar (default)
+#                           shortcut: no box, Ctrl+Super+F opens the centered search panel
+#
 # Also installs the lock screen (a patched cosmic-greeter in ~/.local/bin; skip it with
 # NO_LOCKSCREEN=1). Autologin is separate: ./scripts/autologin.sh
 set -eu
@@ -18,13 +24,25 @@ HERE=$(cd "$(dirname "$0")/.." && pwd)
 
 mode=release
 bundle=""
-case "${1:-}" in
-    --bundle) mode=bundle; bundle=${2:?--bundle needs a file} ;;
-    --build) mode=build ;;
-    --layout-only) mode=none ;;
-    "") ;;
-    *) echo "Unknown option: $1" >&2; exit 2 ;;
-esac
+SETTINGS="$HOME/.config/windows-like-ui"
+mkdir -p "$SETTINGS"
+layout=$(cat "$SETTINGS/layout" 2>/dev/null || echo windows)
+search=$(cat "$SETTINGS/search-mode" 2>/dev/null || echo box)
+while [ $# -gt 0 ]; do
+    case $1 in
+        --bundle) mode=bundle; bundle=${2:?--bundle needs a file}; shift ;;
+        --build) mode=build ;;
+        --layout-only) mode=none ;;
+        --layout) layout=${2:?--layout needs windows or mac}; shift ;;
+        --search) search=${2:?--search needs box or shortcut}; shift ;;
+        *) echo "Unknown option: $1" >&2; exit 2 ;;
+    esac
+    shift
+done
+case $layout in windows|mac) ;; *) echo "--layout must be windows or mac" >&2; exit 2 ;; esac
+case $search in box|shortcut) ;; *) echo "--search must be box or shortcut" >&2; exit 2 ;; esac
+echo "$layout" > "$SETTINGS/layout"
+echo "$search" > "$SETTINGS/search-mode"
 
 flatpak remote-add --user --if-not-exists flathub https://dl.flathub.org/repo/flathub.flatpakrepo
 
@@ -61,50 +79,93 @@ if [ ! -d "$BACKUP" ]; then
     echo "Backed up your panel configuration to $BACKUP"
 fi
 
-# One bottom taskbar, no top bar.
-mkdir -p "$CFG/com.system76.CosmicPanel/v1" "$CFG/com.system76.CosmicPanel.Dock/v1"
-printf '[\n    "Dock",\n]' > "$CFG/com.system76.CosmicPanel/v1/entries"
+# windows: one bottom taskbar. mac: a bottom dock with Start and the taskbar in
+# the middle, plus a slim top bar with the system applets on the right.
+mkdir -p "$CFG/com.system76.CosmicPanel/v1" "$CFG/com.system76.CosmicPanel.Dock/v1" \
+    "$CFG/com.system76.CosmicPanel.Panel/v1"
+if [ "$layout" = mac ]; then
+    printf '[\n    "Panel",\n    "Dock",\n]' > "$CFG/com.system76.CosmicPanel/v1/entries"
+else
+    printf '[\n    "Dock",\n]' > "$CFG/com.system76.CosmicPanel/v1/entries"
+fi
 
+# Common panel settings; the panel name is the first argument.
+panel_base() {
+    d="$CFG/com.system76.CosmicPanel.$1/v1"
+    set_key() { printf '%s' "$2" > "$d/$1"; }
+    set_key name "\"$1\""
+    set_key anchor "$2"
+    set_key anchor_gap false
+    set_key autohide Never
+    set_key background ThemeDefault
+    set_key border_radius 0
+    set_key exclusive_zone true
+    set_key expand_to_edges true
+    set_key margin 0
+    set_key opacity 1.0
+    set_key output All
+    set_key padding 2
+    set_key spacing 0
+    set_key keep_style_on_maximize false
+}
+panel_base Dock Bottom
 dock="$CFG/com.system76.CosmicPanel.Dock/v1"
-set_key() { printf '%s' "$2" > "$dock/$1"; }
-set_key name '"Dock"'
-set_key anchor Bottom
-set_key anchor_gap false
-set_key autohide Never
-set_key background ThemeDefault
-set_key border_radius 0
-set_key exclusive_zone true
-set_key expand_to_edges true
-set_key margin 0
-set_key opacity 1.0
-set_key output All
-set_key padding 2
-set_key spacing 0
-[ -f "$dock/size" ] || set_key size M
-set_key plugins_center 'Some([])'
+[ -f "$dock/size" ] || printf M > "$dock/size"
 
 battery=""
 if ls /sys/class/power_supply/BAT* >/dev/null 2>&1; then
     battery='    "com.system76.CosmicAppletBattery",
 '
 fi
-cat > "$dock/plugins_wings" <<WINGS
+# The search applet always runs (it hosts the Ctrl+Super+F panel); in shortcut mode
+# it draws nothing, so it goes last where its 1px leaves no gap.
+if [ "$search" = box ]; then
+    search_start="    \"$APP.Search\","; search_end=""
+else
+    search_start=""; search_end="    \"$APP.Search\","
+fi
+system_applets="    \"$APP.StatusHub\",
+    \"$APP.Keyboard\",
+    \"$APP.SystemMonitor\",
+    \"com.system76.CosmicAppletNetwork\",
+    \"com.system76.CosmicAppletBluetooth\",
+${battery}    \"com.system76.CosmicAppletAudio\",
+    \"$APP.Dimmer\",
+    \"com.system76.CosmicAppletTime\",
+    \"com.system76.CosmicAppletNotifications\","
+
+if [ "$layout" = mac ]; then
+    printf 'Some([\n    "%s.Start",\n%s\n    "%s.Taskbar",\n%s\n])' "$APP" "$search_start" "$APP" "$search_end" \
+        > "$dock/plugins_center"
+    printf None > "$dock/plugins_wings"
+    printf M > "$dock/size"
+    # Otherwise COSMIC makes the dock opaque while a window is maximized.
+    printf true > "$dock/keep_style_on_maximize"
+    panel_base Panel Top
+    top="$CFG/com.system76.CosmicPanel.Panel/v1"
+    printf XS > "$top/size"
+    printf 'Some([])' > "$top/plugins_center"
+    printf 'Some(([], [\n%s\n]))' "$system_applets" > "$top/plugins_wings"
+else
+    printf 'Some([])' > "$dock/plugins_center"
+    cat > "$dock/plugins_wings" <<WINGS
 Some(([
     "$APP.Start",
+$search_start
     "$APP.Taskbar",
 ], [
-    "$APP.StatusHub",
-    "$APP.Keyboard",
-    "$APP.SystemMonitor",
-    "com.system76.CosmicAppletNetwork",
-    "com.system76.CosmicAppletBluetooth",
-${battery}    "com.system76.CosmicAppletAudio",
-    "$APP.Dimmer",
-    "com.system76.CosmicAppletTime",
-    "com.system76.CosmicAppletNotifications",
-    "$APP.Search",
+$system_applets
+$search_end
 ]))
 WINGS
+fi
+
+# The taskbar is 75% opaque and hidden until you hover the screen edge; windows
+# use the whole screen (no reserved space) and the bar slides over them.
+printf 0.75 > "$dock/opacity"
+printf Always > "$dock/autohide"
+printf '(\n    wait_time: 1000,\n    transition_time: 100,\n    handle_size: 4,\n    unhide_delay: 0,\n)' > "$dock/autohide_behavior"
+printf false > "$dock/exclusive_zone"
 
 # Windows-style shortcuts, added to any custom shortcuts you already have.
 sc="$CFG/com.system76.CosmicSettings.Shortcuts/v1"

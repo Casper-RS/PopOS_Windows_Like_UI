@@ -6,13 +6,13 @@ All applets come in one Flatpak.
 
 ## What you get
 
-- One bottom taskbar, no top bar
+- **Two layouts:** `windows` (one bottom taskbar) or `mac` (a centered Start + taskbar dock at the bottom, the system applets in a slim top bar with small icons)
 - **Start menu** (Pop!_OS logo) in Windows 10 style: app tiles you can pin, a Most used view, an All apps list, and buttons for Task view, Settings, Lock/Log out and Power
-- **Search panel** on `Ctrl+Super+F`: a wide, high-contrast panel centered above the taskbar, with app results and your recent apps
+- **Search panel** on `Ctrl+Super+F`: a wide, high-contrast panel centered above the taskbar, with app results and your recent apps. Show a search box on the taskbar too, or leave it out (`--search box|shortcut`)
 - **Taskbar** that shows window previews on hover, or the app name when it has no windows
 - **Keyboard layout** shown in two lines, like `EN` / `US`
 - Clean tray: Status Hub collects app tray icons, plus a system monitor, network, Bluetooth, battery (laptops only), sound, clock and notifications
-- **Screen dimmer**: a sun button next to sound with a brightness slider (20–100%). It dims with a click-through overlay, so it works on monitors without a backlight
+- **Brightness**: a sun button with a slider that sets the real monitor backlight over DDC/CI (needs `ddcutil`), and `Super+PageUp` / `Super+PageDown` to change it by 10
 - **Clipboard history** on `Super+V`: your last 25 copies (text and screenshots), pin the ones you want to keep
 - **Search** finds apps, settings pages and folders, grouped so you can tell them apart; `Ctrl+Super+F` opens it on the monitor you're working on
 - **Lock screen** with just your picture, name and password on a card, over your wallpaper with drifting sparks (matches [driftpaper](https://github.com/Casper-RS/driftpaper) if you use it)
@@ -74,6 +74,10 @@ If your disk is encrypted, run this to log in automatically after the disk passw
 ```
 
 It asks for your password once (sudo), then opens a dialog to remove the keyring password: type your current password and leave the new one empty, so Chrome and other apps stop asking for it. It refuses to run if the disk isn't encrypted. Undo with `./scripts/autologin.sh --undo`.
+
+Pick the layout and search style with `--layout windows|mac` and `--search box|shortcut`, for example `./scripts/install.sh --layout mac --search shortcut`. Your choice is remembered for the next run, and everything adapts to the screen size, so it works on laptops too. Restart the panel (`pkill -x cosmic-panel`) or log out and in after changing it.
+
+Brightness needs `sudo apt install ddcutil` plus access to the I2C devices: `echo 'KERNEL=="i2c-[0-9]*", TAG+="uaccess"' | sudo tee /etc/udev/rules.d/60-i2c-uaccess.rules`.
 
 To build from source instead of downloading the release, run `./scripts/install.sh --build`.
 
