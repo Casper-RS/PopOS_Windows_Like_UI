@@ -1,5 +1,6 @@
 #!/bin/sh
-# Sets the real backlight of every DDC/CI monitor (needs ddcutil and i2c access).
+# Sets the real backlight of every DDC/CI monitor (needs ddcutil and i2c access)
+# and of a laptop's built-in panel (kernel backlight, set through logind).
 # Usage: wlui-brightness up | down | set <0-100>
 dir="${XDG_STATE_HOME:-$HOME/.local/state}/windows-like-ui"
 level_file="$dir/brightness-level"
@@ -34,6 +35,16 @@ case "$new" in ''|*[!0-9-]*) exit 2 ;; esac
 # A failing bus (monitor unplugged or moved) clears the list so it is detected again.
 for b in $(buses); do
     ddcutil --bus "$b" --noverify setvcp 10 "$new" >/dev/null 2>&1 || rm -f "$bus_file" &
+done
+# Laptop panels have a kernel backlight; logind sets it for the active session without root.
+for d in /sys/class/backlight/*; do
+    [ -r "$d/max_brightness" ] || continue
+    max=$(cat "$d/max_brightness")
+    v=$(( new * max / 100 ))
+    [ "$v" -lt 1 ] && v=1 # never a black screen
+    busctl call org.freedesktop.login1 /org/freedesktop/login1/session/auto \
+        org.freedesktop.login1.Session SetBrightness ssu backlight "$(basename "$d")" "$v" \
+        >/dev/null 2>&1 &
 done
 wait
 echo "$new" > "$level_file"

@@ -8,7 +8,7 @@
 #
 # Search style (remembered for the next run; combine with any option above):
 #   --search box|shortcut   box: search box on the taskbar (default)
-#                           shortcut: no box, Ctrl+Super+F opens the centered search panel
+#                           shortcut: no box, Super+R opens the centered search panel
 #
 # Also installs the lock screen (a patched cosmic-greeter in ~/.local/bin; skip it with
 # NO_LOCKSCREEN=1). Autologin is separate: ./scripts/autologin.sh
@@ -105,7 +105,7 @@ if ls /sys/class/power_supply/BAT* >/dev/null 2>&1; then
     battery='    "com.system76.CosmicAppletBattery",
 '
 fi
-# The search applet always runs (it hosts the Ctrl+Super+F panel); in shortcut mode
+# The search applet always runs (it hosts the Super+R panel); in shortcut mode
 # it draws nothing, so it goes last where its 1px leaves no gap.
 if [ "$search" = box ]; then
     search_start="    \"$APP.Search\","; search_end=""
@@ -136,7 +136,7 @@ WINGS
 printf 0.95 > "$dock/opacity"
 printf Always > "$dock/autohide"
 printf false > "$dock/exclusive_zone"
-printf '(\n    wait_time: 1000,\n    transition_time: 100,\n    handle_size: 4,\n    unhide_delay: 0,\n)' > "$dock/autohide_behavior"
+printf '(\n    wait_time: 1000,\n    transition_time: 180,\n    handle_size: 4,\n    unhide_delay: 0,\n)' > "$dock/autohide_behavior"
 
 # Windows-style shortcuts, added to any custom shortcuts you already have.
 sc="$CFG/com.system76.CosmicSettings.Shortcuts/v1"
@@ -153,7 +153,9 @@ add_shortcut() {
 add_shortcut '(modifiers: [Super], key: "i"): Spawn("cosmic-settings"),'
 add_shortcut '(modifiers: [Super], key: "l"): System(LockScreen),'
 add_shortcut '(modifiers: [Super, Shift], key: "l"): System(LogOut),'
-add_shortcut "(modifiers: [Ctrl, Super], key: \"f\"): Spawn(\"gdbus emit --session \
+# Search used Ctrl+Super+F before; move it to Super+R (this replaces COSMIC's Super+R resize).
+sed -i '/modifiers: \[Ctrl, Super\], key: "f"): Spawn("gdbus emit/d' "$sc/custom"
+add_shortcut "(modifiers: [Super], key: \"r\"): Spawn(\"gdbus emit --session \
 --object-path /$(echo "$APP.Search" | tr . /) --signal $APP.Search.Open\"),"
 # Real monitor brightness over DDC/CI (used by these keys and the bar's slider).
 install -D -m 755 "$HERE/scripts/wlui-brightness" "$HOME/.local/share/windows-like-ui/brightness"
